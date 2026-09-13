@@ -1,6 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type RefObject } from "react";
-import { app, useApp, useAppShallow, useBaseUrl } from "../lib/store";
-import { columnsOf, DONE_WINDOWS, groupByColumn } from "../lib/board";
+import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import { app, ISSUE_KEY_RE, useApp, useAppShallow, useBaseUrl } from "../lib/store";
+import { columnsOf, DONE_WINDOWS, groupByColumn, matchesBoardQuery } from "../lib/board";
 import { relativeTime } from "../lib/format";
 import { toAssetUrl } from "../lib/html";
 import type { Issue } from "../lib/types";
@@ -23,14 +23,27 @@ export default function KanbanBoard({ searchBox }: { searchBox: RefObject<HTMLIn
   const boardEl = useRef<HTMLDivElement>(null);
   const [query, setQuery] = useState("");
 
+  useEffect(() => setQuery(""), [board?.id]);
+
+  const columns = useMemo(() => columnsOf(boardConfig), [boardConfig]);
+  const filtered = useMemo(() => (query.trim() ? issues.filter((i) => matchesBoardQuery(i, query)) : issues), [issues, query]);
+  const grouped = useMemo(() => groupByColumn(filtered, columns), [filtered, columns]);
+  const filtering = filtered.length !== issues.length;
+
   function submit(e: FormEvent) {
     e.preventDefault();
-    app.quickSearch(query);
+    const km = query.trim().match(ISSUE_KEY_RE);
+    const target = km ? km[1].toUpperCase() : filtered.length === 1 ? filtered[0].key : null;
+    if (target) void app.openIssue(target);
     searchBox.current?.blur();
   }
 
-  const columns = useMemo(() => columnsOf(boardConfig), [boardConfig]);
-  const grouped = useMemo(() => groupByColumn(issues, columns), [issues, columns]);
+  function onSearchKey(e: ReactKeyboardEvent<HTMLInputElement>) {
+    if (e.key !== "Escape") return;
+    e.stopPropagation();
+    if (query) setQuery("");
+    else searchBox.current?.blur();
+  }
 
   useEffect(() => {
     if (!selectedKey || !boardEl.current) return;
@@ -47,7 +60,7 @@ export default function KanbanBoard({ searchBox }: { searchBox: RefObject<HTMLIn
         {board && <span className={`${css.badge} muted`}>{board.type}</span>}
         <span className={`${css.count} muted`}>
           {listLoading && <span className="spin"></span>}
-          {listLoading && !issues.length ? "" : `${issues.length}${total > issues.length ? ` / ${total}` : ""} issues`}
+          {listLoading && !issues.length ? "" : filtering ? `${filtered.length} of ${issues.length} issues` : `${issues.length}${total > issues.length ? ` / ${total}` : ""} issues`}
           {listFromCache && !listLoading && <span title="Showing cached copy">· cached</span>}
         </span>
         <span className={css.grow}></span>
@@ -72,8 +85,10 @@ export default function KanbanBoard({ searchBox }: { searchBox: RefObject<HTMLIn
             ref={searchBox}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={onSearchKey}
             type="search"
-            placeholder="Issue key or search…  ( / )"
+            placeholder={`Search ${board?.name ?? "board"}…  ( / )`}
+            title="Filters the cards on this board by key, summary, labels, assignee, type, priority or status"
             spellCheck={false}
           />
         </form>
@@ -105,7 +120,9 @@ export default function KanbanBoard({ searchBox }: { searchBox: RefObject<HTMLIn
                 {cards.map((issue) => (
                   <Card key={issue.key} issue={issue} active={issue.key === selectedKey} done={ci === lastIdx} icon={icon} />
                 ))}
-                {!cards.length && !listLoading && <div className={`${css.emptyCol} muted`}>{ci === lastIdx && doneWindow !== "all" ? "Nothing completed in this window" : "No issues"}</div>}
+                {!cards.length && !listLoading && (
+                  <div className={`${css.emptyCol} muted`}>{filtering ? "No matches" : ci === lastIdx && doneWindow !== "all" ? "Nothing completed in this window" : "No issues"}</div>
+                )}
               </div>
             </div>
           );

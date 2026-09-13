@@ -1,4 +1,4 @@
-import type { BoardConfig, Issue } from "./types";
+import type { Board, BoardConfig, Issue, Project } from "./types";
 
 /** How far back the last ("done") column of a kanban board reaches. */
 export type DoneWindow = "30d" | "1y" | "all";
@@ -87,4 +87,76 @@ export function doneWindowJql(columns: ColumnDef[], window: DoneWindow): string 
       : "";
   if (!notDone) return "";
   return `${notDone} OR resolutiondate >= -${days}d OR (resolution is EMPTY AND updated >= -${days}d)`;
+}
+
+export interface BoardFolder {
+  key: string;
+  name: string;
+  boards: Board[];
+}
+
+const OTHER_FOLDER = "__other";
+
+/** Boards grouped by the project they live in (sidebar folders), projects in Jira's order. */
+export function groupBoards(boards: Board[], projects: Project[]): BoardFolder[] {
+  const byKey = new Map<string, BoardFolder>();
+  for (const b of boards) {
+    const pk = b.location?.projectKey ?? OTHER_FOLDER;
+    let folder = byKey.get(pk);
+    if (!folder) {
+      const project = projects.find((p) => p.key === pk);
+      const name = project?.name ?? b.location?.projectName ?? (pk === OTHER_FOLDER ? "Other boards" : pk);
+      folder = { key: pk, name, boards: [] };
+      byKey.set(pk, folder);
+    }
+    folder.boards.push(b);
+  }
+  const order = new Map(projects.map((p, i) => [p.key, i]));
+  const rank = (f: BoardFolder) => (f.key === OTHER_FOLDER ? Number.MAX_SAFE_INTEGER : (order.get(f.key) ?? order.size));
+  return [...byKey.values()].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+}
+
+const OPEN_FOLDERS_KEY = "jirafast:openBoardFolders";
+
+export function loadOpenFolders(): Set<string> {
+  try {
+    const raw = localStorage.getItem(OPEN_FOLDERS_KEY);
+    const list: unknown = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(list) ? list.filter((x): x is string => typeof x === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+export function saveOpenFolders(open: Set<string>) {
+  try {
+    localStorage.setItem(OPEN_FOLDERS_KEY, JSON.stringify([...open]));
+  } catch {
+    // Private mode / quota: the choice simply won't persist.
+  }
+}
+
+/**
+ * Board search: every whitespace-separated term must appear in the card's
+ * key, summary, labels, assignee, type, priority or status (case-insensitive).
+ */
+export function matchesBoardQuery(issue: Issue, query: string): boolean {
+  const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
+  if (!terms.length) return true;
+  const f = issue.fields;
+  const hay = [
+    issue.key,
+    f.summary,
+    ...(f.labels ?? []),
+    f.assignee?.displayName,
+    f.assignee?.name,
+    f.issuetype?.name,
+    f.priority?.name,
+    f.status?.name,
+    ...(f.components ?? []).map((c) => c.name),
+  ]
+    .filter((s): s is string => typeof s === "string")
+    .join("\n")
+    .toLowerCase();
+  return terms.every((t) => hay.includes(t));
 }

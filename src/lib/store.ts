@@ -19,7 +19,7 @@ export const QUICK_VIEWS: QuickView[] = [
 ];
 
 const PAGE_SIZE = 50;
-const ISSUE_KEY_RE = /^\s*([A-Za-z][A-Za-z0-9_]+-\d+)\s*$/;
+export const ISSUE_KEY_RE = /^\s*([A-Za-z][A-Za-z0-9_]+-\d+)\s*$/;
 const JQL_HINT_RE = /(=|!=|~|\bORDER BY\b|\bAND\b|\bOR\b|\bIN\b|\bIS\b|>=|<=)/i;
 
 export type Screen = "loading" | "connect" | "main";

@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { app, QUICK_VIEWS, useApp, useBaseUrl } from "../lib/store";
 import { errorMessage } from "../lib/api";
+import { groupBoards, loadOpenFolders, saveOpenFolders } from "../lib/board";
 import css from "./Sidebar.module.css";
 
 export default function Sidebar() {
@@ -12,6 +13,24 @@ export default function Sidebar() {
   const baseUrl = useBaseUrl();
   const [showAllProjects, setShowAllProjects] = useState(false);
   const visibleProjects = showAllProjects ? projects : projects.slice(0, 12);
+  const boardFolders = useMemo(() => groupBoards(boards, projects), [boards, projects]);
+  const [openFolders, setOpenFolders] = useState<Set<string>>(loadOpenFolders);
+  const activeBoardId = viewId.startsWith("board:") ? Number(viewId.slice(6)) : null;
+
+  useEffect(() => {
+    const folder = boardFolders.find((f) => f.boards.some((b) => b.id === activeBoardId));
+    if (folder) setOpenFolders((prev) => (prev.has(folder.key) ? prev : new Set(prev).add(folder.key)));
+  }, [activeBoardId, boardFolders]);
+
+  function toggleFolder(key: string) {
+    setOpenFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      saveOpenFolders(next);
+      return next;
+    });
+  }
 
   function pickView(id: string, name: string, jql: string) {
     void app.runSearch(jql, id, name);
@@ -67,17 +86,36 @@ export default function Sidebar() {
       {boards.length > 0 && (
         <div className={css.section}>
           <h3>Boards</h3>
-          {boards.map((b) => (
-            <button
-              key={b.id}
-              className={item(viewId === `board:${b.id}`)}
-              title={b.location?.displayName ?? b.name}
-              onClick={() => app.openBoard(b)}
-            >
-              <span className={`${css.pkey} ${css.btype}`}>{b.type === "scrum" ? "scrum" : "kanban"}</span>
-              <span className={css.pname}>{b.name}</span>
-            </button>
-          ))}
+          {boardFolders.map((folder) => {
+            const hasActive = folder.boards.some((b) => b.id === activeBoardId);
+            const open = openFolders.has(folder.key);
+            return (
+              <div key={folder.key} className={css.folder}>
+                <button
+                  className={`${css.item} ${css.folderHead} ${hasActive ? css.folderActive : ""}`}
+                  aria-expanded={open}
+                  title={folder.name}
+                  onClick={() => toggleFolder(folder.key)}
+                >
+                  <span className={`${css.chevron} ${open ? css.chevronOpen : ""}`}>▸</span>
+                  <span className={css.pname}>{folder.name}</span>
+                  <span className={`${css.count} muted`}>{folder.boards.length}</span>
+                </button>
+                {open &&
+                  folder.boards.map((b) => (
+                    <button
+                      key={b.id}
+                      className={`${item(b.id === activeBoardId)} ${css.nested}`}
+                      title={b.location?.displayName ?? b.name}
+                      onClick={() => app.openBoard(b)}
+                    >
+                      <span className={`${css.pkey} ${css.btype}`}>{b.type === "scrum" ? "scrum" : "kanban"}</span>
+                      <span className={css.pname}>{b.name}</span>
+                    </button>
+                  ))}
+              </div>
+            );
+          })}
         </div>
       )}
 

@@ -62,17 +62,21 @@ description and comments should get the whole screen.
 
 ## Boards
 
-Jira Software boards (kanban and scrum) are listed in the sidebar, read from
-`/rest/agile/1.0`. The board view uses the board's own column configuration
-(status → column mapping, min/max constraints) and shows every issue of the
-board filter; boards without a column configuration fall back to To Do / In
-Progress / Done by status category.
+Jira Software boards (kanban and scrum) are listed in the sidebar as
+collapsible per-project folders, read from `/rest/agile/1.0`. The board view
+uses the board's own column configuration (status → column mapping, min/max
+constraints) and shows every issue of the board filter; boards without a column
+configuration fall back to To Do / In Progress / Done by status category.
 
 The **Done column** filter in the board header limits the last column to issues
 completed in the **last 30 days**, **last year**, or **all** of them (the other
 columns are never filtered). The choice is remembered. Clicking a card opens the
 issue in place; `Esc` (or the `▦ Board` button) returns to the board, `j`/`k`
 walk through the cards.
+
+The search box on a board (`/`) filters the cards of **that board only**, as you
+type, by key, summary, labels, assignee, type, priority or status. `Enter` opens
+the issue when the query is an issue key or leaves a single match; `Esc` clears.
 
 ![Board](docs/board.png)
 
