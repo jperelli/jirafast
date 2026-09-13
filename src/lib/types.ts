@@ -203,6 +203,31 @@ export interface ServerInfo {
   serverTitle?: string;
 }
 
+// ---- Jira Software (Agile) API ---------------------------------------------
+
+export interface Board {
+  id: number;
+  name: string;
+  type: "kanban" | "scrum" | string;
+  location?: { projectKey?: string; projectName?: string; displayName?: string };
+}
+
+export interface BoardColumn {
+  name: string;
+  statuses: { id: string }[];
+  min?: number;
+  max?: number;
+}
+
+export interface BoardConfig {
+  id: number;
+  name: string;
+  type: string;
+  filter?: { id: string };
+  subQuery?: { query: string };
+  columnConfig?: { columns: BoardColumn[]; constraintType?: string };
+}
+
 // ---- backend envelope -----------------------------------------------------
 
 export interface Cached<T> {

@@ -61,6 +61,12 @@
 .item.active .pkey {
   color: var(--accent);
 }
+.btype {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  min-width: 44px;
+}
 .pname {
   overflow: hidden;
   text-overflow: ellipsis;

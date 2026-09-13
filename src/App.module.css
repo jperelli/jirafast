@@ -7,6 +7,10 @@
 .layout.noSidebar {
   grid-template-columns: minmax(320px, 420px) 1fr;
 }
+.layout.board {
+  grid-template-columns: 220px 1fr;
+}
+.layout.board.noSidebar,
 .layout.focus {
   grid-template-columns: 1fr;
 }

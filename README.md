@@ -56,12 +56,28 @@ description and comments should get the whole screen.
 
 ![Editor](docs/editor.png)
 
+## Boards
+
+Jira Software boards (kanban and scrum) are listed in the sidebar, read from
+`/rest/agile/1.0`. The board view uses the board's own column configuration
+(status → column mapping, min/max constraints) and shows every issue of the
+board filter; boards without a column configuration fall back to To Do / In
+Progress / Done by status category.
+
+The **Done column** filter in the board header limits the last column to issues
+completed in the **last 30 days**, **last year**, or **all** of them (the other
+columns are never filtered). The choice is remembered. Clicking a card opens the
+issue in place; `Esc` (or the `▦ Board` button) returns to the board, `j`/`k`
+walk through the cards.
+
+![Board](docs/board.png)
+
 ## Features
 
 - Personal Access Token (recommended) or username/password auth, optional
   acceptance of self-signed certificates, Jira context paths (`https://host/jira`).
 - Quick views (my open issues, reported by me, watched, recently viewed/updated),
-  favourite filters and projects in the sidebar.
+  favourite filters, boards and projects in the sidebar.
 - Search box accepts plain text, an issue key, or JQL.
 - Issue view: status + transitions, assignee (+ assign to me), reporter,
   priority, type, labels, components, fix versions, due date, description,

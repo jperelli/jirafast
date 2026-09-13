@@ -5,6 +5,7 @@ import Connect from "./components/Connect";
 import Sidebar from "./components/Sidebar";
 import IssueList from "./components/IssueList";
 import IssueView from "./components/IssueView";
+import KanbanBoard from "./components/KanbanBoard";
 import Lightbox from "./components/Lightbox";
 import Toast from "./components/Toast";
 import ShortcutsHelp from "./components/ShortcutsHelp";
@@ -26,7 +27,13 @@ async function toggleFullscreen() {
 }
 
 export default function App() {
-  const { screen, focus, sidebarOpen } = useAppShallow((s) => ({ screen: s.screen, focus: s.focus, sidebarOpen: s.sidebarOpen }));
+  const { screen, focus, sidebarOpen, view, hasIssue } = useAppShallow((s) => ({
+    screen: s.screen,
+    focus: s.focus,
+    sidebarOpen: s.sidebarOpen,
+    view: s.view,
+    hasIssue: s.selectedKey !== null,
+  }));
   const editor = useApp((s) => s.editor);
   const [showHelp, setShowHelp] = useState(false);
   const searchBox = useRef<HTMLInputElement>(null);
@@ -48,6 +55,7 @@ export default function App() {
         if (showHelp) setShowHelp(false);
         else if (isTyping(e)) (e.target as HTMLElement).blur();
         else if (s.focus) app.setFocus(false);
+        else if (s.view === "board" && s.selectedKey) app.closeIssue();
         return;
       }
       if (isTyping(e) || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -70,7 +78,8 @@ export default function App() {
         case "/":
           e.preventDefault();
           app.setFocus(false);
-          // The list mounts on the next frame when leaving focus mode.
+          if (s.view === "board") app.closeIssue();
+          // The list/board mounts on the next frame when leaving focus mode.
           requestAnimationFrame(() => {
             searchBox.current?.focus();
             searchBox.current?.select();
@@ -119,10 +128,22 @@ export default function App() {
         <Connect />
       ) : (
         <>
-          <div className={`${css.layout} ${focus ? css.focus : ""} ${!sidebarOpen ? css.noSidebar : ""}`}>
+          <div
+            className={`${css.layout} ${focus ? css.focus : ""} ${!sidebarOpen ? css.noSidebar : ""} ${view === "board" ? css.board : ""}`}
+          >
             {!focus && sidebarOpen && <Sidebar />}
-            {!focus && <IssueList searchBox={searchBox} />}
-            <IssueView />
+            {view === "board" ? (
+              hasIssue ? (
+                <IssueView />
+              ) : (
+                <KanbanBoard searchBox={searchBox} />
+              )
+            ) : (
+              <>
+                {!focus && <IssueList searchBox={searchBox} />}
+                <IssueView />
+              </>
+            )}
           </div>
           {editor && (
             <Suspense fallback={<div className={`${css.overlay} muted`}>Loading editor…</div>}>

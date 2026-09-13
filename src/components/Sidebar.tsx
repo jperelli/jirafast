@@ -7,6 +7,7 @@ export default function Sidebar() {
   const me = useApp((s) => s.me);
   const filters = useApp((s) => s.filters);
   const projects = useApp((s) => s.projects);
+  const boards = useApp((s) => s.boards);
   const viewId = useApp((s) => s.viewId);
   const baseUrl = useBaseUrl();
   const [showAllProjects, setShowAllProjects] = useState(false);
@@ -58,6 +59,23 @@ export default function Sidebar() {
               onClick={() => pickView(`filter:${f.id}`, f.name, f.jql)}
             >
               {f.name}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {boards.length > 0 && (
+        <div className={css.section}>
+          <h3>Boards</h3>
+          {boards.map((b) => (
+            <button
+              key={b.id}
+              className={item(viewId === `board:${b.id}`)}
+              title={b.location?.displayName ?? b.name}
+              onClick={() => app.openBoard(b)}
+            >
+              <span className={`${css.pkey} ${css.btype}`}>{b.type === "scrum" ? "scrum" : "kanban"}</span>
+              <span className={css.pname}>{b.name}</span>
             </button>
           ))}
         </div>

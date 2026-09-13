@@ -134,6 +134,16 @@ impl JiraClient {
         )
     }
 
+    /// Jira Software (Agile) REST API, present on Server/Data Center with the
+    /// Jira Software application installed.
+    fn agile(&self, path: &str) -> String {
+        format!(
+            "{}/rest/agile/1.0/{}",
+            self.base_url,
+            path.trim_start_matches('/')
+        )
+    }
+
     async fn send_json(&self, method: Method, url: String, body: Option<&Value>) -> Result<Value> {
         let mut req = self.http.request(method, &url);
         if let Some(b) = body {
@@ -300,6 +310,79 @@ impl JiraClient {
 
     pub async fn projects(&self) -> Result<Value> {
         self.get(self.api("project")).await
+    }
+
+    /// All boards visible to the user, following the Agile API's pagination
+    /// (`isLast` / `startAt`). Returns a flat array of board objects.
+    pub async fn boards(&self) -> Result<Value> {
+        let mut all = Vec::new();
+        let mut start_at = 0usize;
+        loop {
+            let url = format!("{}?startAt={start_at}&maxResults=50", self.agile("board"));
+            let page = self.get(url).await?;
+            let values = page
+                .get("values")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let n = values.len();
+            all.extend(values);
+            let is_last = page.get("isLast").and_then(Value::as_bool).unwrap_or(true);
+            if is_last || n == 0 || all.len() >= 1000 {
+                break;
+            }
+            start_at += n;
+        }
+        Ok(Value::Array(all))
+    }
+
+    /// Board configuration: columns with their mapped statuses, filter, etc.
+    pub async fn board_configuration(&self, board_id: u64) -> Result<Value> {
+        self.get(self.agile(&format!("board/{board_id}/configuration")))
+            .await
+    }
+
+    /// Issues of a board (the board filter is applied server-side), further
+    /// narrowed by `jql`. Fetches every page up to `limit` issues and returns
+    /// `{ "issues": [...], "total": n }` shaped like a search result.
+    pub async fn board_issues(
+        &self,
+        board_id: u64,
+        jql: &str,
+        fields: &[&str],
+        limit: usize,
+    ) -> Result<Value> {
+        let base = self.agile(&format!("board/{board_id}/issue"));
+        let fields = fields.join(",");
+        let mut issues = Vec::new();
+        let mut total = 0u64;
+        let mut start_at = 0usize;
+        loop {
+            let url = format!(
+                "{base}?startAt={start_at}&maxResults=200&jql={}&fields={}",
+                urlencode(jql),
+                urlencode(&fields)
+            );
+            let page = self.get(url).await?;
+            let values = page
+                .get("issues")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            total = page.get("total").and_then(Value::as_u64).unwrap_or(total);
+            let n = values.len();
+            issues.extend(values);
+            start_at += n;
+            if n == 0 || start_at as u64 >= total || issues.len() >= limit {
+                break;
+            }
+        }
+        Ok(serde_json::json!({
+            "issues": issues,
+            "total": total,
+            "startAt": 0,
+            "maxResults": issues.len(),
+        }))
     }
 
     pub async fn user_search(&self, query: &str) -> Result<Value> {

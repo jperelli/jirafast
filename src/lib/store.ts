@@ -1,7 +1,8 @@
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { api, errorMessage, swr } from "./api";
-import type { Filter, Issue, JiraUser, Project, PublicSettings, SearchResult, SettingsInput } from "./types";
+import { columnsOf, doneWindowJql, groupByColumn, loadDoneWindow, saveDoneWindow, type DoneWindow } from "./board";
+import type { Board, BoardConfig, Filter, Issue, JiraUser, Project, PublicSettings, SearchResult, SettingsInput } from "./types";
 
 export interface QuickView {
   id: string;
@@ -22,6 +23,9 @@ const ISSUE_KEY_RE = /^\s*([A-Za-z][A-Za-z0-9_]+-\d+)\s*$/;
 const JQL_HINT_RE = /(=|!=|~|\bORDER BY\b|\bAND\b|\bOR\b|\bIN\b|\bIS\b|>=|<=)/i;
 
 export type Screen = "loading" | "connect" | "main";
+
+/** What the middle of the window shows: a search result list or a kanban board. */
+export type View = "list" | "board";
 
 /** Full-window editor: edit an existing issue or create a new one. */
 export type EditorMode = { kind: "edit"; key: string } | { kind: "create"; projectKey: string | null };
@@ -47,6 +51,13 @@ export interface AppState {
 
   filters: Filter[];
   projects: Project[];
+  boards: Board[];
+
+  view: View;
+  /** Active board in board view; `issues` then holds its cards in column order. */
+  board: Board | null;
+  boardConfig: BoardConfig | null;
+  doneWindow: DoneWindow;
 
   jql: string;
   viewId: string;
@@ -78,6 +89,11 @@ const initial: AppState = {
   me: null,
   filters: [],
   projects: [],
+  boards: [],
+  view: "list",
+  board: null,
+  boardConfig: null,
+  doneWindow: loadDoneWindow(),
   jql: QUICK_VIEWS[0].jql,
   viewId: QUICK_VIEWS[0].id,
   viewName: QUICK_VIEWS[0].name,
@@ -194,19 +210,33 @@ export const app = {
 
   async disconnect() {
     await api.disconnect();
-    set({ settings: null, me: null, issues: [], issue: null, selectedKey: null, filters: [], projects: [], screen: "connect" });
+    set({
+      settings: null,
+      me: null,
+      issues: [],
+      issue: null,
+      selectedKey: null,
+      filters: [],
+      projects: [],
+      boards: [],
+      view: "list",
+      board: null,
+      boardConfig: null,
+      screen: "connect",
+    });
   },
 
   async loadSidebar() {
     await Promise.allSettled([
       swr(api.getFavouriteFilters, (filters) => set({ filters })),
       swr(api.getProjects, (projects) => set({ projects })),
+      swr(api.getBoards, (boards) => set({ boards })),
     ]);
   },
 
   async runSearch(jql: string, viewId = "custom", viewName = "Search") {
     const seq = ++searchSeq;
-    set({ jql, viewId, viewName, listError: null, listLoading: true });
+    set({ view: "list", jql, viewId, viewName, listError: null, listLoading: true });
     let gotAny = false;
     try {
       await swr<SearchResult>(
@@ -227,9 +257,79 @@ export const app = {
     }
   },
 
+  /**
+   * Show a kanban board: its column configuration (cached, then fresh) and
+   * every issue on it, with the last column limited to `doneWindow`.
+   */
+  async openBoard(board: Board) {
+    const seq = ++searchSeq;
+    const s = get();
+    set({
+      view: "board",
+      board,
+      boardConfig: s.board?.id === board.id ? s.boardConfig : null,
+      viewId: `board:${board.id}`,
+      viewName: board.name,
+      jql: "",
+      listError: null,
+      listLoading: true,
+    });
+    let loadedFor: string | null = null;
+    const loadIssues = (config: BoardConfig) => {
+      const jql = doneWindowJql(columnsOf(config), get().doneWindow);
+      if (jql === loadedFor) return;
+      loadedFor = jql;
+      void app.loadBoardIssues(seq, board.id, config, jql);
+    };
+    try {
+      await swr<BoardConfig>(
+        (pc) => api.getBoardConfiguration(board.id, pc),
+        (config) => {
+          if (seq !== searchSeq) return;
+          set({ boardConfig: config, jql: doneWindowJql(columnsOf(config), get().doneWindow) });
+          loadIssues(config);
+        },
+      );
+    } catch (e) {
+      if (seq !== searchSeq) return;
+      set({ listError: errorMessage(e), listLoading: false, issues: [], total: 0 });
+    }
+  },
+
+  async loadBoardIssues(seq: number, boardId: number, config: BoardConfig, jql: string) {
+    const columns = columnsOf(config);
+    let gotAny = false;
+    set({ listLoading: true });
+    try {
+      await swr<SearchResult>(
+        (pc) => api.getBoardIssues(boardId, jql, pc),
+        (res, fromCache) => {
+          if (seq !== searchSeq) return;
+          gotAny = true;
+          set({ issues: groupByColumn(res.issues, columns).flat(), total: res.total, listFromCache: fromCache });
+          if (!fromCache) void api.prefetchIssues(res.issues.slice(0, 15).map((i) => i.key));
+        },
+      );
+    } catch (e) {
+      if (seq !== searchSeq) return;
+      set({ listError: errorMessage(e) });
+      if (!gotAny) set({ issues: [], total: 0 });
+    } finally {
+      if (seq === searchSeq) set({ listLoading: false });
+    }
+  },
+
+  setDoneWindow(doneWindow: DoneWindow) {
+    if (doneWindow === get().doneWindow) return;
+    set({ doneWindow });
+    saveDoneWindow(doneWindow);
+    const { view, board } = get();
+    if (view === "board" && board) void app.openBoard(board);
+  },
+
   async loadMore() {
     const s = get();
-    if (s.listLoading || s.issues.length >= s.total) return;
+    if (s.view === "board" || s.listLoading || s.issues.length >= s.total) return;
     const seq = searchSeq;
     set({ listLoading: true });
     try {
@@ -247,7 +347,8 @@ export const app = {
   },
 
   refreshList() {
-    const { jql, viewId, viewName } = get();
+    const { view, board, jql, viewId, viewName } = get();
+    if (view === "board" && board) return app.openBoard(board);
     return app.runSearch(jql, viewId, viewName);
   },
 

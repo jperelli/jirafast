@@ -1,6 +1,8 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  Board,
+  BoardConfig,
   Cached,
   Comment,
   CreateMeta,
@@ -50,6 +52,11 @@ export const api = {
   getFavouriteFilters: (preferCache: boolean) =>
     invoke<Cached<Filter[]> | null>("get_favourite_filters", { preferCache }),
   getProjects: (preferCache: boolean) => invoke<Cached<Project[]> | null>("get_projects", { preferCache }),
+  getBoards: (preferCache: boolean) => invoke<Cached<Board[]> | null>("get_boards", { preferCache }),
+  getBoardConfiguration: (boardId: number, preferCache: boolean) =>
+    invoke<Cached<BoardConfig> | null>("get_board_configuration", { boardId, preferCache }),
+  getBoardIssues: (boardId: number, jql: string, preferCache: boolean) =>
+    invoke<Cached<SearchResult> | null>("get_board_issues", { boardId, jql, preferCache }),
   searchUsers: (query: string) => invoke<JiraUser[]>("search_users", { query }),
   clearCache: () => invoke<void>("clear_cache"),
 

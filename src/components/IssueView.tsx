@@ -25,13 +25,14 @@ export default function IssueView() {
   const baseUrl = useBaseUrl();
   const issue = useApp((s) => s.issue);
   const me = useApp((s) => s.me);
-  const { selectedKey, issueLoading, issueFromCache, issueError, focus, historyLength } = useAppShallow((s) => ({
+  const { selectedKey, issueLoading, issueFromCache, issueError, focus, historyLength, onBoard } = useAppShallow((s) => ({
     selectedKey: s.selectedKey,
     issueLoading: s.issueLoading,
     issueFromCache: s.issueFromCache,
     issueError: s.issueError,
     focus: s.focus,
     historyLength: s.history.length,
+    onBoard: s.view === "board",
   }));
   const f = issue?.fields;
   const rendered = issue?.renderedFields;
@@ -145,10 +146,16 @@ export default function IssueView() {
             <button className="ghost" onClick={() => app.back()} disabled={!historyLength} title="Back (u)">
               ←
             </button>
-            {focus && (
-              <button className="ghost" onClick={() => app.setFocus(false)} title="Exit focus mode (Esc)">
-                ☰ List
+            {onBoard ? (
+              <button className="ghost" onClick={() => app.closeIssue()} title="Back to board (Esc)">
+                ▦ Board
               </button>
+            ) : (
+              focus && (
+                <button className="ghost" onClick={() => app.setFocus(false)} title="Exit focus mode (Esc)">
+                  ☰ List
+                </button>
+              )
             )}
             <span className={`${css.crumb} muted`}>
               {f?.project && (

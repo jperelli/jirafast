@@ -394,6 +394,23 @@ for (let i = 0; i < 38; i++) {
   });
 }
 
+// Completed long ago, so the kanban "done column" window (30 days / 1 year /
+// all) has something to hide at each step.
+for (const [i, daysAgo] of [45, 120, 200, 400, 700].entries()) {
+  mkIssue({
+    proj: pick(projects, i),
+    type: pick([types.task, types.bug, types.story], i),
+    summary: `Legacy: ${pick(["migrate CI to containers", "drop Java 8 support", "remove the old REST v1 client", "upgrade PostgreSQL to 15", "retire the Confluence macro"], i)}`,
+    status: statuses.done,
+    priority: priorities.low,
+    assignee: pick([users.bob, users.alice], i),
+    reporter: ME,
+    labels: ["legacy"],
+    description: `Completed ${daysAgo} days ago.`,
+    daysAgo,
+  });
+}
+
 // Subtasks + links for the big issue.
 const sub1 = mkIssue({ proj: projects[0], type: types.sub, summary: "Rust: reqwest client with PAT/basic auth", status: statuses.done, priority: priorities.medium, assignee: ME, reporter: ME, description: "Done.", parent: linkRef(big), daysAgo: 0.3 });
 const sub2 = mkIssue({ proj: projects[0], type: types.sub, summary: "Svelte: focus mode + fullscreen", status: statuses.progress, priority: priorities.medium, assignee: ME, reporter: ME, description: "In progress.", parent: linkRef(big), daysAgo: 0.2 });
@@ -405,6 +422,37 @@ big.fields.issuelinks = [
 
 function linkRef(i) {
   return { id: i.id, key: i.key, self: i.self, fields: { summary: i.fields.summary, status: i.fields.status, priority: i.fields.priority, issuetype: i.fields.issuetype } };
+}
+
+// ---- agile boards ----------------------------------------------------------
+
+const boards = [
+  mkBoard(1, "Platform board", "kanban", projects[0], [["To Do", [statuses.todo]], ["In Progress", [statuses.progress, statuses.review]], ["Done", [statuses.done]]]),
+  mkBoard(2, "Web Frontend", "kanban", projects[1], [["Backlog", [statuses.todo]], ["In Progress", [statuses.progress]], ["Review", [statuses.review]], ["Done", [statuses.done]]]),
+  mkBoard(3, "OPS Scrum", "scrum", projects[2], [["To Do", [statuses.todo]], ["In Progress", [statuses.progress, statuses.review]], ["Done", [statuses.done]]]),
+];
+
+function mkBoard(id, name, type, proj, columns) {
+  const self = `${BASE}/rest/agile/1.0/board/${id}`;
+  return {
+    summary: { id, self, name, type, location: { projectId: Number(proj.id), displayName: `${proj.name} (${proj.key})`, projectName: proj.name, projectKey: proj.key, projectTypeKey: "software", avatarURI: proj.avatarUrls["16x16"], name: `${proj.name} (${proj.key})` } },
+    jql: `project = ${proj.key} ORDER BY Rank ASC`,
+    configuration: {
+      id,
+      name,
+      type,
+      self: `${self}/configuration`,
+      location: { type: "project", key: proj.key, id: proj.id, self: proj.self, name: proj.name },
+      filter: { id: String(10200 + id), self: `${BASE}/rest/api/2/filter/${10200 + id}` },
+      subQuery: type === "kanban" ? { query: "fixVersion in unreleasedVersions() OR fixVersion is EMPTY" } : undefined,
+      columnConfig: {
+        columns: columns.map(([cname, sts]) => ({ name: cname, statuses: sts.map((s) => ({ id: s.id, self: s.self })) })),
+        constraintType: "issueCount",
+      },
+      estimation: { type: "field", field: { fieldId: "customfield_10016", displayName: "Story Points" } },
+      ranking: { rankCustomFieldId: 10019 },
+    },
+  };
 }
 
 // ---- transitions -----------------------------------------------------------
@@ -436,6 +484,14 @@ function runJql(jql) {
   if (/resolution\s*=\s*unresolved/.test(lower)) list = list.filter((i) => !i.fields.resolution);
   const st = m(/status\s*=\s*['"]?([a-z ]+?)['"]?(?:\s|$|and|order)/);
   if (st) list = list.filter((i) => i.fields.status.name.toLowerCase() === st.trim());
+  // The kanban done-column window jirafast sends:
+  //   status not in (<ids>) OR resolutiondate >= -Nd OR (resolution is EMPTY AND updated >= -Nd)
+  const dw = lower.match(/status\s+not\s+in\s*\(([\d,\s]+)\)\s+or\s+resolutiondate\s*>=\s*-(\d+)d/);
+  if (dw) {
+    const ids = dw[1].split(",").map((s) => s.trim());
+    const cutoff = Date.now() - Number(dw[2]) * 86400_000;
+    list = list.filter((i) => !ids.includes(i.fields.status.id) || parseJiraDate(i.fields.resolutiondate ?? i.fields.updated) >= cutoff);
+  }
   const type = m(/(?:type|issuetype)\s*=\s*['"]?([a-z-]+)['"]?/);
   if (type) list = list.filter((i) => i.fields.issuetype.name.toLowerCase() === type);
   const text = q.match(/text\s*~\s*"((?:[^"\\]|\\.)*)"/i)?.[1];
@@ -467,6 +523,10 @@ function runJql(jql) {
   };
   list.sort((a, b) => (val(a) < val(b) ? -dir : val(a) > val(b) ? dir : 0));
   return list;
+}
+
+function parseJiraDate(s) {
+  return Date.parse(String(s).replace(/([+-]\d{2})(\d{2})$/, "$1:$2"));
 }
 
 function projectIssue(issue, fields) {
@@ -696,6 +756,43 @@ const server = http.createServer(async (req, res) => {
     return res.end(html);
   }
 
+  // Jira Software's Agile API (boards).
+  if (p.startsWith("/rest/agile/1.0/")) {
+    if (!authorized(req)) return jiraError(res, 401, "You do not have permission to access this resource. Please log in.");
+    await sleep(LATENCY);
+    const a = p.slice("/rest/agile/1.0/".length).replace(/\/$/, "");
+    if (a === "board") {
+      const startAt = Number(url.searchParams.get("startAt") ?? 0);
+      const maxResults = Math.min(Number(url.searchParams.get("maxResults") ?? 50), 50);
+      const type = url.searchParams.get("type");
+      const all = boards.map((b) => b.summary).filter((b) => !type || b.type === type);
+      const page = all.slice(startAt, startAt + maxResults);
+      return json(res, 200, { maxResults, startAt, total: all.length, isLast: startAt + page.length >= all.length, values: page });
+    }
+    const bm = a.match(/^board\/(\d+)(?:\/(.*))?$/);
+    if (bm) {
+      const board = boards.find((b) => b.summary.id === Number(bm[1]));
+      if (!board) return jiraError(res, 404, `No board with id ${bm[1]} exists.`);
+      const sub = bm[2] ?? "";
+      if (sub === "") return json(res, 200, board.summary);
+      if (sub === "configuration") return json(res, 200, board.configuration);
+      if (sub === "issue") {
+        const startAt = Number(url.searchParams.get("startAt") ?? 0);
+        const maxResults = Math.min(Number(url.searchParams.get("maxResults") ?? 50), 200);
+        const fields = url.searchParams.get("fields")?.split(",");
+        let list;
+        try {
+          list = runJql(`${board.jql} ${url.searchParams.get("jql") ?? ""}`);
+        } catch (e) {
+          return jiraError(res, 400, `Error in the JQL Query: ${e.message}`);
+        }
+        const page = list.slice(startAt, startAt + maxResults).map((i) => ({ expand: "operations,versionedRepresentations,editmeta,changelog,renderedFields", id: i.id, self: i.self, key: i.key, fields: projectIssue(i, fields) }));
+        return json(res, 200, { expand: "schema,names", startAt, maxResults, total: list.length, issues: page });
+      }
+    }
+    return jiraError(res, 404, `No such resource: ${p}`);
+  }
+
   if (!p.startsWith("/rest/api/2/")) {
     return jiraError(res, 404, `No such resource: ${p}`);
   }
@@ -819,6 +916,7 @@ const server = http.createServer(async (req, res) => {
         if (!t) return jiraError(res, 400, "It seems that you have tried to perform an illegal workflow operation.");
         issue.fields.status = t.to;
         issue.fields.resolution = t.to === statuses.done ? { id: "10000", name: "Done" } : null;
+        issue.fields.resolutiondate = t.to === statuses.done ? daysAgoIso(0) : null;
         issue.fields.updated = daysAgoIso(0);
         const add = body.update?.comment?.[0]?.add?.body;
         if (add) issue.fields.comment.comments.push(mkComment(ME, add, 0));

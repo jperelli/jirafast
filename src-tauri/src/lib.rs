@@ -26,7 +26,11 @@ const LIST_FIELDS: &[&str] = &[
     "labels",
     "duedate",
     "resolution",
+    "resolutiondate",
 ];
+
+/// Upper bound on issues loaded for one kanban board.
+const BOARD_ISSUE_LIMIT: usize = 2000;
 
 pub struct AppState {
     config_dir: PathBuf,
@@ -362,6 +366,49 @@ async fn get_projects(
 }
 
 #[tauri::command]
+async fn get_boards(
+    state: State<'_, AppState>,
+    prefer_cache: bool,
+) -> Result<Option<CachedResponse>> {
+    let client = state.client()?;
+    cached_or_fetch(&state, "boards", prefer_cache, async {
+        client.boards().await
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_board_configuration(
+    state: State<'_, AppState>,
+    board_id: u64,
+    prefer_cache: bool,
+) -> Result<Option<CachedResponse>> {
+    let client = state.client()?;
+    let key = format!("board:{board_id}:config");
+    cached_or_fetch(&state, &key, prefer_cache, async {
+        client.board_configuration(board_id).await
+    })
+    .await
+}
+
+#[tauri::command]
+async fn get_board_issues(
+    state: State<'_, AppState>,
+    board_id: u64,
+    jql: String,
+    prefer_cache: bool,
+) -> Result<Option<CachedResponse>> {
+    let client = state.client()?;
+    let key = format!("board:{board_id}:issues:{}", jql.trim());
+    cached_or_fetch(&state, &key, prefer_cache, async {
+        client
+            .board_issues(board_id, jql.trim(), LIST_FIELDS, BOARD_ISSUE_LIMIT)
+            .await
+    })
+    .await
+}
+
+#[tauri::command]
 async fn search_users(state: State<'_, AppState>, query: String) -> Result<Value> {
     state.client()?.user_search(&query).await
 }
@@ -482,6 +529,9 @@ pub fn run() {
             assign_issue,
             get_favourite_filters,
             get_projects,
+            get_boards,
+            get_board_configuration,
+            get_board_issues,
             search_users,
             clear_cache,
         ])
