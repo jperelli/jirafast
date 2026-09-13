@@ -1,0 +1,388 @@
+:root {
+  --bg: #ffffff;
+  --bg-2: #f4f5f7;
+  --bg-3: #ebecf0;
+  --fg: #172b4d;
+  --fg-2: #42526e;
+  --muted: #6b778c;
+  --border: #dfe1e6;
+  --accent: #0052cc;
+  --accent-2: #0065ff;
+  --accent-bg: #deebff;
+  --danger: #de350b;
+  --danger-bg: #ffebe6;
+  --ok: #00875a;
+  --ok-bg: #e3fcef;
+  --warn: #ff991f;
+  --warn-bg: #fffae6;
+  --shadow: 0 1px 3px rgba(9, 30, 66, 0.2);
+  --radius: 4px;
+  --content-width: 900px;
+  --font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace;
+  color-scheme: light dark;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1d2125;
+    --bg-2: #22272b;
+    --bg-3: #2c333a;
+    --fg: #b6c2cf;
+    --fg-2: #9fadbc;
+    --muted: #8c9bab;
+    --border: #3a434c;
+    --accent: #579dff;
+    --accent-2: #85b8ff;
+    --accent-bg: #1c2b41;
+    --danger: #f87168;
+    --danger-bg: #42221f;
+    --ok: #4bce97;
+    --ok-bg: #1c3329;
+    --warn: #f5cd47;
+    --warn-bg: #332e1b;
+    --shadow: 0 1px 3px rgba(0, 0, 0, 0.5);
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font);
+  font-size: 14px;
+  line-height: 1.45;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+  overflow: hidden;
+}
+
+#app {
+  height: 100%;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+a:hover {
+  text-decoration: underline;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  cursor: pointer;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+  background: var(--bg-3);
+  padding: 5px 10px;
+  line-height: 1.3;
+}
+button:hover {
+  filter: brightness(0.96);
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.primary {
+  background: var(--accent);
+  color: #fff;
+}
+button.ghost {
+  background: transparent;
+}
+button.ghost:hover {
+  background: var(--bg-3);
+}
+
+input,
+textarea,
+select {
+  background: var(--bg);
+  border: 2px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  outline: none;
+}
+input:focus,
+textarea:focus,
+select:focus {
+  border-color: var(--accent);
+}
+
+.muted {
+  color: var(--muted);
+}
+.mono {
+  font-family: var(--mono);
+}
+.spin {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  vertical-align: middle;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.lozenge {
+  display: inline-block;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  background: var(--bg-3);
+  color: var(--fg-2);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.lozenge.new {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+.lozenge.indeterminate {
+  background: var(--accent);
+  color: #fff;
+}
+.lozenge.done {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+
+kbd {
+  font-family: var(--mono);
+  font-size: 11px;
+  background: var(--bg-3);
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  padding: 0 5px;
+}
+
+/* ---- Jira server-rendered HTML (wiki markup → HTML) ----------------------- */
+
+.jira-html {
+  font-size: 15px;
+  line-height: 1.6;
+  word-wrap: break-word;
+  overflow-wrap: anywhere;
+}
+.jira-html > :first-child {
+  margin-top: 0;
+}
+.jira-html > :last-child {
+  margin-bottom: 0;
+}
+.jira-html p {
+  margin: 0 0 0.8em;
+}
+.jira-html h1,
+.jira-html h2,
+.jira-html h3,
+.jira-html h4,
+.jira-html h5,
+.jira-html h6 {
+  margin: 1.2em 0 0.4em;
+  line-height: 1.25;
+  font-weight: 600;
+}
+.jira-html h1 {
+  font-size: 1.6em;
+}
+.jira-html h2 {
+  font-size: 1.35em;
+}
+.jira-html h3 {
+  font-size: 1.15em;
+}
+.jira-html img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 3px;
+}
+.jira-html img.emoticon {
+  width: 16px;
+  height: 16px;
+  vertical-align: text-bottom;
+}
+.jira-html a {
+  color: var(--accent);
+}
+.jira-html a[data-issue-key] {
+  font-weight: 500;
+}
+.jira-html ul,
+.jira-html ol {
+  padding-left: 1.6em;
+  margin: 0 0 0.8em;
+}
+.jira-html li {
+  margin: 0.15em 0;
+}
+.jira-html blockquote {
+  margin: 0.6em 0;
+  padding: 0.2em 0 0.2em 1em;
+  border-left: 3px solid var(--border);
+  color: var(--fg-2);
+}
+.jira-html hr {
+  border: 0;
+  border-top: 1px solid var(--border);
+  margin: 1.2em 0;
+}
+.jira-html code,
+.jira-html tt {
+  font-family: var(--mono);
+  font-size: 0.9em;
+  background: var(--bg-3);
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+}
+.jira-html pre {
+  font-family: var(--mono);
+  font-size: 0.88em;
+  line-height: 1.5;
+  background: var(--bg-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  overflow: auto;
+  margin: 0.6em 0;
+  white-space: pre;
+}
+.jira-html pre code {
+  background: none;
+  padding: 0;
+  font-size: inherit;
+}
+/* {code} and {panel} / {noformat} macros */
+.jira-html .code.panel,
+.jira-html .preformatted.panel,
+.jira-html .panel {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  margin: 0.8em 0;
+  background: var(--bg-2);
+  overflow: hidden;
+}
+.jira-html .panel .panelHeader,
+.jira-html .panel .codeHeader {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  font-weight: 600;
+  background: var(--bg-3);
+}
+.jira-html .panel .panelContent,
+.jira-html .panel .codeContent {
+  padding: 10px 12px;
+}
+.jira-html .panel pre {
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+.jira-html .panelContent > :last-child,
+.jira-html .codeContent > :last-child {
+  margin-bottom: 0;
+}
+/* wiki tables */
+.jira-html table {
+  border-collapse: collapse;
+  margin: 0.8em 0;
+  max-width: 100%;
+  font-size: 0.95em;
+}
+.jira-html table td,
+.jira-html table th {
+  border: 1px solid var(--border);
+  padding: 5px 9px;
+  text-align: left;
+  vertical-align: top;
+}
+.jira-html table th,
+.jira-html table .confluenceTh {
+  background: var(--bg-3);
+  font-weight: 600;
+}
+.jira-html .confluenceTable {
+  width: auto;
+}
+/* status lozenges rendered by Jira for {color}/{status} macros */
+.jira-html .aui-lozenge {
+  display: inline-block;
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  background: var(--bg-3);
+}
+.jira-html .aui-lozenge-success {
+  background: var(--ok-bg);
+  color: var(--ok);
+}
+.jira-html .aui-lozenge-error,
+.jira-html .aui-lozenge-removed {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+.jira-html .aui-lozenge-current {
+  background: var(--warn-bg);
+  color: var(--warn);
+}
+.jira-html .aui-lozenge-complete,
+.jira-html .aui-lozenge-moved {
+  background: var(--accent-bg);
+  color: var(--accent);
+}
+/* issue macro / user mentions */
+.jira-html .jira-issue-macro,
+.jira-html .user-hover {
+  white-space: nowrap;
+}
+.jira-html .jira-issue-macro-key img {
+  width: 16px;
+  height: 16px;
+  vertical-align: text-bottom;
+  margin-right: 2px;
+}
+.jira-html .resolution-done {
+  text-decoration: line-through;
+}
+.jira-html .user-hover {
+  background: var(--accent-bg);
+  border-radius: 3px;
+  padding: 0 3px;
+}
+.jira-html del,
+.jira-html s {
+  color: var(--muted);
+}
+.jira-html .error {
+  color: var(--danger);
+}
