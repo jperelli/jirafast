@@ -77,7 +77,10 @@ export function prepareJiraHtml(html: string | null | undefined, baseUrl: string
   doc.querySelectorAll<HTMLImageElement>("img").forEach((img) => {
     const src = img.getAttribute("src") ?? "";
     const rewritten = toAssetUrl(src, baseUrl);
-    if (rewritten) img.setAttribute("src", rewritten);
+    if (rewritten) {
+      img.setAttribute("data-orig-src", src);
+      img.setAttribute("src", rewritten);
+    }
     img.setAttribute("loading", "lazy");
     img.setAttribute("decoding", "async");
     // Thumbnails of attachments link to the full-size file.

@@ -224,6 +224,9 @@ kbd {
   height: auto;
   border-radius: 3px;
 }
+.jira-html img:not(.emoticon) {
+  cursor: zoom-in;
+}
 .jira-html img.emoticon {
   width: 16px;
   height: 16px;

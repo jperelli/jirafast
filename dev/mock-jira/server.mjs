@@ -270,20 +270,44 @@ function renderWiki(text) {
       const code = esc.match(/^\{code(?::[^}]*)?\}\n?([\s\S]*?)\n?\{code\}$/);
       if (code) return `<div class="code panel"><div class="codeContent panelContent"><pre class="code-java">${code[1]}</pre></div></div>`;
       const heading = esc.match(/^h([1-6])\.\s+(.*)$/);
-      if (heading) return `<h${heading[1]}>${heading[2]}</h${heading[1]}>`;
+      if (heading) return `<h${heading[1]}>${inline(heading[2])}</h${heading[1]}>`;
+      if (esc.split("\n").every((l) => /^\|/.test(l))) {
+        const rows = esc.split("\n").map((l) => {
+          const header = l.startsWith("||");
+          const cells = l.split(header ? "||" : "|").slice(1, -1);
+          const tag = header ? "th" : "td";
+          const cls = header ? "confluenceTh" : "confluenceTd";
+          return `<tr>${cells.map((c) => `<${tag} class='${cls}'>${inline(c.trim())}</${tag}>`).join("")}</tr>`;
+        });
+        return `<div class='table-wrap'><table class='confluenceTable'><tbody>${rows.join("")}</tbody></table></div>`;
+      }
+      const thumb = esc.match(/^!([^|!]+)\|thumbnail!$/);
+      if (thumb) {
+        const att = [...issues.values()].flatMap((i) => i.fields.attachment ?? []).find((a) => a.filename === thumb[1]);
+        if (att) {
+          return `<p><span class="image-wrap" style=""><a href="${CTX}/secure/attachment/${att.id}/${att.filename}" title="${att.filename}"><img src="${CTX}/secure/thumbnail/${att.id}/_thumb_${att.id}.png" alt="${att.filename}" style="border: 0px solid black" /></a></span></p>`;
+        }
+      }
       if (/^(\*|#|-) /m.test(esc) && esc.split("\n").every((l) => /^(\*|#|-) /.test(l))) {
         const tag = esc.startsWith("# ") ? "ol" : "ul";
         return `<${tag}>${esc.split("\n").map((l) => `<li>${l.slice(2)}</li>`).join("")}</${tag}>`;
       }
-      return `<p>${esc
-        .replace(/\*([^*]+)\*/g, "<b>$1</b>")
-        .replace(/_([^_]+)_/g, "<em>$1</em>")
-        .replace(/\{\{([^}]+)\}\}/g, "<tt>$1</tt>")
-        .replace(/\[~([a-z]+)\]/g, (_m, u) => `<a class="user-hover" rel="${u}" href="${CTX}/secure/ViewProfile.jspa?name=${u}">${users[u]?.displayName ?? u}</a>`)
-        .replace(/\b([A-Z]{2,5}-\d+)\b/g, (_m, k) => (issues.has(k) ? `<a href="${CTX}/browse/${k}" class="issue-link" data-issue-key="${k}">${k}</a>` : k))
-        .replace(/\n/g, "<br/>")}</p>`;
+      return `<p>${inline(esc).replace(/\n/g, "<br/>")}</p>`;
     })
     .join("\n");
+}
+
+function inline(esc) {
+  return esc
+    .replace(/\{color:([#\w]+)\}([\s\S]*?)\{color\}/g, '<font color="$1">$2</font>')
+    .replace(/\{\{([^}]+)\}\}/g, "<tt>$1</tt>")
+    .replace(/\[([^\]|]+)\|(https?:[^\]]+)\]/g, '<a href="$2" class="external-link" rel="nofollow">$1</a>')
+    .replace(/\[~([a-z]+)\]/g, (_m, u) => `<a class="user-hover" rel="${u}" href="${CTX}/secure/ViewProfile.jspa?name=${u}">${users[u]?.displayName ?? u}</a>`)
+    .replace(/(^|\s)\*([^*\n]+)\*(?=\s|$|[.,;:!?])/g, "$1<b>$2</b>")
+    .replace(/(^|\s)_([^_\n]+)_(?=\s|$|[.,;:!?])/g, "$1<em>$2</em>")
+    .replace(/(^|\s)\+([^+\n]+)\+(?=\s|$|[.,;:!?])/g, "$1<ins>$2</ins>")
+    .replace(/(^|\s)-([^-\n]+)-(?=\s|$|[.,;:!?])/g, "$1<del>$2</del>")
+    .replace(/\b([A-Z]{2,5}-\d+)\b/g, (_m, k) => (issues.has(k) ? `<a href="${CTX}/browse/${k}" class="issue-link" data-issue-key="${k}">${k}</a>` : k));
 }
 
 const authorsCycle = [users.bob, users.alice, users.jdoe];
@@ -292,7 +316,9 @@ const bigComments = Array.from({ length: 60 }, (_, i) =>
     pick(authorsCycle, i),
     i % 9 === 8
       ? `{code:java}\npublic class Slow {\n    // ${pick(LOREM, i)}\n    void render() { for (int n = 0; n < 200; n++) paint(n); }\n}\n{code}`
-      : `${pick(LOREM, i)}\n\n${pick(LOREM, i + 3)} See PLAT-${(i % 6) + 2}. ${i % 4 === 0 ? "[~jdoe] thoughts?" : ""}`,
+      : i === 1
+        ? `Screenshot of the network panel:\n\n!screenshot.png|thumbnail!\n\nand the profile:\n\n!profile.svg|thumbnail!`
+        : `${pick(LOREM, i)}\n\n${pick(LOREM, i + 3)} See PLAT-${(i % 6) + 2}. ${i % 4 === 0 ? "[~jdoe] thoughts?" : ""}`,
     (60 - i) * 0.4,
   ),
 );
@@ -647,6 +673,7 @@ const server = http.createServer(async (req, res) => {
       return svg(res, `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M3 ${name === "low" ? 5 : 11} l5 ${name === "low" ? 6 : -6} 5 ${name === "low" ? -6 : 6}" stroke="${color}" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`);
     }
     if (p.startsWith("/secure/thumbnail/") || p.startsWith("/secure/attachment/30001/")) return svg(res, svgThumb());
+    if (p.startsWith("/secure/attachment/30003/")) return svg(res, svgAvatar(3, "BB"));
     if (p.startsWith("/secure/attachment/")) {
       res.writeHead(200, { "Content-Type": "application/octet-stream" });
       return res.end("mock attachment body\n");

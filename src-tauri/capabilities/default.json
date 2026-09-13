@@ -9,7 +9,7 @@
     "core:window:allow-is-fullscreen",
     "core:window:allow-set-title",
     "core:webview:allow-set-webview-zoom",
-    "opener:allow-open-url",
+    "opener:default",
     "window-state:default"
   ]
 }

@@ -1,0 +1,124 @@
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.92);
+  z-index: 90;
+  display: flex;
+  flex-direction: column;
+  color: #eee;
+  user-select: none;
+}
+.top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: rgba(0, 0, 0, 0.5);
+  flex: none;
+}
+.title {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50vw;
+}
+.counter,
+.dims {
+  font-size: 12px;
+  color: #aaa;
+}
+.grow {
+  flex: 1;
+}
+.btn {
+  background: rgba(255, 255, 255, 0.1);
+  color: #eee;
+  border: 0;
+  padding: 4px 10px;
+  font-size: 13px;
+  min-width: 30px;
+}
+.btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  filter: none;
+}
+.btn.on {
+  background: var(--accent);
+  color: #fff;
+}
+.nav {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 48px;
+  height: 80px;
+  border: 0;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #fff;
+  font-size: 40px;
+  line-height: 1;
+  z-index: 2;
+}
+.nav:hover {
+  background: rgba(255, 255, 255, 0.2);
+  filter: none;
+}
+.prev {
+  left: 12px;
+}
+.next {
+  right: 12px;
+}
+.stage {
+  flex: 1;
+  min-height: 0;
+  position: relative;
+}
+.stage.fit {
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  overflow: hidden;
+}
+.stage.fit .img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  cursor: zoom-in;
+}
+.stage.scroll {
+  overflow: auto;
+  display: grid;
+  place-items: center;
+}
+.stage.scroll .img {
+  max-width: none;
+  cursor: zoom-out;
+  margin: 16px;
+}
+.img {
+  opacity: 0;
+  transition: opacity 0.12s;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6);
+  background: #fff;
+}
+.img.loaded {
+  opacity: 1;
+}
+.spinner {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  border-color: rgba(255, 255, 255, 0.3);
+  border-top-color: #fff;
+}
+.failed {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  color: #ccc;
+}

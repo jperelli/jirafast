@@ -1,7 +1,8 @@
 # jirafast
 
 A very fast desktop client for **Jira Server / Data Center** (tested against the
-10.3.x REST API), built with [Tauri v2](https://v2.tauri.app) (Rust) and Svelte 5.
+10.3.x REST API), built with [Tauri v2](https://v2.tauri.app) (Rust), React 19 and
+[TipTap](https://tiptap.dev).
 
 It exists for one reason: reading and writing issues should be instant, and the
 description and comments should get the whole screen.
@@ -39,13 +40,19 @@ description and comments should get the whole screen.
 ## Editing and creating issues
 
 - **Edit (`e`)** opens a full-window zen editor: only the summary and the
-  description (Jira wiki markup, as Jira Server stores it). `☰ Fields` /
-  `Ctrl+B` slides in a left sidebar with priority, assignee, labels,
+  description. `☰ Fields` / `Ctrl+B` (`Ctrl+Shift+F` while typing in the
+  rich editor) slides in a left sidebar with priority, assignee, labels,
   components, fix versions, due date and environment, driven by `editmeta`.
 - **New issue (`n` or `＋`)** uses the same editor with project, issue type and
   parent (for sub-tasks) from `createmeta`.
-- `Ctrl+P` shows a live preview rendered by Jira; `Ctrl+S` saves; `Esc` cancels
-  (asks before discarding changes).
+- The description is edited as **rich text** (TipTap: headings, lists, links,
+  code blocks, tables, quotes, images) and converted back to the Jira wiki
+  markup that Jira Server stores. Markup the editor cannot represent (colors,
+  panels, macros…) triggers a warning; `Ctrl+P` switches to editing the raw
+  wiki markup verbatim. `Ctrl+S` saves; `Esc` cancels (asks before discarding
+  changes).
+- Images in descriptions, comments and attachments open in a fullscreen
+  lightbox (click; zoom with `+`/`-`/`0`/`1`, `←`/`→` between images).
 
 ![Editor](docs/editor.png)
 
@@ -123,7 +130,7 @@ npm run tauri dev                 # connect with any PAT ("bad" -> 401)
 Other useful commands:
 
 ```bash
-npm run check                           # svelte-check / TypeScript
+npm run check                           # TypeScript
 cd src-tauri && cargo test && cargo clippy
 ```
 
@@ -134,9 +141,11 @@ src-tauri/src/jira.rs      Jira REST v2 client (reqwest, PAT/basic, context path
 src-tauri/src/settings.rs  settings.json persistence (0600)
 src-tauri/src/cache.rs     memory + disk cache for JSON and binary assets
 src-tauri/src/lib.rs       Tauri commands, prefetching, jira-asset:// protocol
-src/lib/store.svelte.ts    app state (Svelte 5 runes), SWR loading, navigation
+src/lib/store.ts           app state (zustand), SWR loading, navigation
 src/lib/html.ts            sanitizing + rewriting Jira's rendered HTML
-src/components/            Connect, Sidebar, IssueList, IssueView, CommentBox…
+src/lib/wiki.ts            TipTap HTML -> Jira wiki markup
+src/components/            Connect, Sidebar, IssueList, IssueView, IssueEditor,
+                           RichEditor, Lightbox, CommentBox…
 dev/mock-jira/             mock Jira 10.3 REST server
 ```
 

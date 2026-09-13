@@ -1,0 +1,212 @@
+.editor {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  z-index: 20;
+}
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  margin-left: 6px;
+}
+.key {
+  font-weight: 600;
+}
+.ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 40vw;
+}
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--warn);
+  flex-shrink: 0;
+}
+.grow {
+  flex: 1;
+}
+.on {
+  background: var(--accent-bg) !important;
+  color: var(--accent) !important;
+}
+.modes {
+  display: flex;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  margin: 0 4px;
+}
+.modes button {
+  border-radius: 0;
+}
+.banner {
+  padding: 8px 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  font-size: 13px;
+}
+.banner > span {
+  flex: 1;
+}
+.warn {
+  background: var(--warn-bg);
+}
+.error {
+  background: var(--danger-bg);
+  color: var(--danger);
+}
+.errorText {
+  color: var(--danger);
+}
+.body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+.fields {
+  width: 300px;
+  flex-shrink: 0;
+  border-right: 1px solid var(--border);
+  background: var(--bg-2);
+  overflow-y: auto;
+  padding: 12px 14px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 13px;
+}
+.fields label > span {
+  color: var(--fg-2);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+.req {
+  color: var(--danger);
+}
+.fields input,
+.fields select,
+.fields textarea {
+  width: 100%;
+}
+.fields fieldset {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 10px 8px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.fields legend {
+  color: var(--fg-2);
+  font-weight: 600;
+  font-size: 12px;
+  text-transform: uppercase;
+  padding: 0 4px;
+}
+.check {
+  flex-direction: row !important;
+  align-items: center;
+  gap: 8px !important;
+}
+.check input {
+  width: auto;
+}
+.assignee .row {
+  display: flex;
+  gap: 6px;
+}
+.small {
+  padding: 2px 8px;
+  font-size: 12px;
+}
+.current {
+  font-size: 12px;
+}
+.hits {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  max-height: 160px;
+  overflow-y: auto;
+}
+.hit {
+  text-align: left;
+  border-radius: 0;
+}
+
+.zen {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 20px 32px 8px;
+}
+.zen > * {
+  width: 100%;
+  max-width: var(--content-width);
+}
+.summary {
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  padding: 4px 0 8px;
+  font-weight: 600;
+  line-height: 1.25;
+  background: transparent;
+  margin-bottom: 8px;
+}
+.summary:focus {
+  border-bottom-color: var(--accent);
+}
+.markup {
+  flex: 1;
+  min-height: 0;
+  resize: none;
+  border: none;
+  padding: 8px 0;
+  background: transparent;
+  font-family: var(--mono);
+  line-height: 1.6;
+  tab-size: 2;
+}
+.markup:focus {
+  border: none;
+}
+.hint {
+  font-size: 12px;
+  padding-top: 6px;
+  flex-shrink: 0;
+}
+.center {
+  flex: 1;
+  display: grid;
+  place-items: center;
+}
