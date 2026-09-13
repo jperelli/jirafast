@@ -1,4 +1,4 @@
-import type { Board, BoardConfig, Issue, Project } from "./types";
+import type { Board, BoardConfig, BoardProjectInfo, Issue, Project } from "./types";
 
 /** How far back the last ("done") column of a kanban board reaches. */
 export type DoneWindow = "30d" | "1y" | "all";
@@ -99,10 +99,55 @@ export interface ProjectFolder {
 
 export const OTHER_FOLDER = "__other";
 
-/** Project keys a board belongs to: its `location` (Cloud / newer DC) or the resolved board projects. */
-function projectKeysOf(board: Board, boardProjects: Record<number, string[]>): string[] {
+/**
+ * Project references (keys, ids or names) in a JQL `project` clause:
+ * `project = ABC`, `project in (ABC, "Some name", 10042)`, `project = "Some name"`.
+ * Negated clauses (`!=`, `not in`) are ignored.
+ */
+export function jqlProjectRefs(jql: string): string[] {
+  const refs: string[] = [];
+  const re = /\bproject\s*(?:=|in)\s*(\(([^)]*)\)|"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([\w-]+))/gi;
+  for (const m of jql.matchAll(re)) {
+    if (m[2] !== undefined) {
+      for (const part of m[2].split(",")) {
+        const t = part.trim().replace(/^(["'])(.*)\1$/, "$2");
+        if (t) refs.push(t);
+      }
+    } else refs.push(m[3] ?? m[4] ?? m[5] ?? "");
+  }
+  return refs.filter(Boolean);
+}
+
+function matchProjects(refs: Iterable<string>, projects: Project[]): string[] {
+  const keys = new Set<string>();
+  for (const raw of refs) {
+    const ref = raw.trim().toLowerCase();
+    if (!ref) continue;
+    const p = projects.find((p) => p.key.toLowerCase() === ref || p.id === ref || p.name.toLowerCase() === ref);
+    if (p) keys.add(p.key);
+  }
+  return [...keys];
+}
+
+/**
+ * Project keys a board belongs to: its `location` (Cloud / newer DC), else what
+ * `board/{id}/project` returned, else the configuration's location, else the
+ * projects named by its filter's JQL.
+ */
+function projectKeysOf(board: Board, projects: Project[], info: BoardProjectInfo | undefined): string[] {
   if (board.location?.projectKey) return [board.location.projectKey];
-  return boardProjects[board.id] ?? [];
+  if (!info) return [];
+  const fromApi = matchProjects(
+    info.projects.flatMap((p) => [p.key, p.id]),
+    projects,
+  );
+  if (fromApi.length) return fromApi;
+  const loc = info.location;
+  if (loc?.type === "project" || loc?.key) {
+    const fromLoc = matchProjects([loc.key ?? "", String(loc.id ?? ""), loc.name ?? ""], projects);
+    if (fromLoc.length) return fromLoc;
+  }
+  return info.jql ? matchProjects(jqlProjectRefs(info.jql), projects) : [];
 }
 
 /**
@@ -110,11 +155,11 @@ function projectKeysOf(board: Board, boardProjects: Record<number, string[]>): s
  * it, followed by an "other" folder for boards that map to no known project.
  * A board spanning several projects is listed under each of them.
  */
-export function groupBoards(boards: Board[], projects: Project[], boardProjects: Record<number, string[]>): ProjectFolder[] {
+export function groupBoards(boards: Board[], projects: Project[], boardProjects: Record<number, BoardProjectInfo>): ProjectFolder[] {
   const folders = new Map<string, ProjectFolder>(projects.map((p) => [p.key, { key: p.key, name: p.name, project: p, boards: [] }]));
   const other: ProjectFolder = { key: OTHER_FOLDER, name: "Other boards", project: null, boards: [] };
   for (const b of boards) {
-    const keys = projectKeysOf(b, boardProjects).filter((k) => folders.has(k));
+    const keys = projectKeysOf(b, projects, boardProjects[b.id]).filter((k) => folders.has(k));
     if (!keys.length) other.boards.push(b);
     for (const k of keys) folders.get(k)?.boards.push(b);
   }

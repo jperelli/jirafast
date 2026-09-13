@@ -449,22 +449,28 @@ const boards = [
   mkBoard(1, "Platform board", "kanban", projects[0], [["To Do", [statuses.todo]], ["In Progress", [statuses.progress, statuses.review]], ["Done", [statuses.done]]]),
   mkBoard(2, "Web Frontend", "kanban", projects[1], [["Backlog", [statuses.todo]], ["In Progress", [statuses.progress]], ["Review", [statuses.review]], ["Done", [statuses.done]]]),
   mkBoard(3, "OPS Scrum", "scrum", projects[2], [["To Do", [statuses.todo]], ["In Progress", [statuses.progress, statuses.review]], ["Done", [statuses.done]]]),
+  // A board Jira does not associate with a project (board/{id}/project is
+  // empty, no location in its configuration): only its filter JQL tells.
+  mkBoard(4, "Platform bugs", "kanban", projects[0], [["To Do", [statuses.todo]], ["Doing", [statuses.progress, statuses.review]], ["Done", [statuses.done]]], {
+    unassociated: true,
+    jql: "project = PLAT AND issuetype = Bug ORDER BY Rank ASC",
+  }),
 ];
 
-function mkBoard(id, name, type, proj, columns) {
+function mkBoard(id, name, type, proj, columns, opts = {}) {
   const self = `${BASE}/rest/agile/1.0/board/${id}`;
   return {
     // Like Jira Server/DC: board summaries carry no `location`; the project
     // association is exposed through GET board/{id}/project instead.
     summary: { id, self, name, type },
-    projects: [proj],
-    jql: `project = ${proj.key} ORDER BY Rank ASC`,
+    projects: opts.unassociated ? [] : [proj],
+    jql: opts.jql ?? `project = ${proj.key} ORDER BY Rank ASC`,
     configuration: {
       id,
       name,
       type,
       self: `${self}/configuration`,
-      location: { type: "project", key: proj.key, id: proj.id, self: proj.self, name: proj.name },
+      location: opts.unassociated ? undefined : { type: "project", key: proj.key, id: proj.id, self: proj.self, name: proj.name },
       filter: { id: String(10200 + id), self: `${BASE}/rest/api/2/filter/${10200 + id}` },
       subQuery: type === "kanban" ? { query: "fixVersion in unreleasedVersions() OR fixVersion is EMPTY" } : undefined,
       columnConfig: {
@@ -920,6 +926,14 @@ const server = http.createServer(async (req, res) => {
   try {
     if (r === "myself" && req.method === "GET") return json(res, 200, ME);
     if (r === "filter/favourite") return json(res, 200, filters);
+    if (/^filter\/\d+$/.test(r)) {
+      const id = r.slice("filter/".length);
+      const fav = filters.find((f) => f.id === id);
+      if (fav) return json(res, 200, fav);
+      const board = boards.find((b) => b.configuration.filter.id === id);
+      if (!board) return jiraError(res, 404, `A value with ID '${id}' does not exist for the field 'filter'.`);
+      return json(res, 200, { id, self: `${BASE}/rest/api/2/filter/${id}`, name: `Filter for ${board.summary.name}`, jql: board.jql, owner: ME, favourite: false });
+    }
     if (r === "project") return json(res, 200, projects);
     if (r === "priority") return json(res, 200, Object.values(priorities));
     if (r === "issue/createmeta" && req.method === "GET") {

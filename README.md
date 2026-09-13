@@ -65,8 +65,10 @@ description and comments should get the whole screen.
 Each project in the sidebar is a collapsible folder holding its **Open issues**
 list and its Jira Software boards (kanban and scrum), read from
 `/rest/agile/1.0`. Boards are attached to projects via
-`board/{id}/project`, so this also works on Jira Server/DC where board
-summaries carry no `location`. The board view
+`board/{id}/project`, falling back to the board configuration's location and
+to the `project = X` / `project in (...)` clause of the board's filter JQL, so
+this also works on Jira Server/DC where board summaries carry no `location`.
+Boards matching no project end up in an "Other boards" folder. The board view
 uses the board's own column configuration (status → column mapping, min/max
 constraints) and shows every issue of the board filter; boards without a column
 configuration fall back to To Do / In Progress / Done by status category.

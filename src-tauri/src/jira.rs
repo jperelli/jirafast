@@ -336,9 +336,37 @@ impl JiraClient {
         Ok(Value::Array(all))
     }
 
-    /// Projects a board is associated with (its filter's projects). Jira
-    /// Server boards often lack a `location`, so this is how they get grouped.
+    /// Everything that tells which project(s) a board belongs to, for boards
+    /// whose summary carries no `location` (the norm on Jira Server/DC):
+    /// `{ "projects": [...], "location": {...}|null, "jql": "..."|null }`.
+    /// `projects` is `board/{id}/project`; when that is empty or fails, the
+    /// board configuration's `location` and its filter's JQL are fetched so
+    /// the caller can still match `project = X` / `project in (...)`.
     pub async fn board_projects(&self, board_id: u64) -> Result<Value> {
+        let projects = self.board_project_list(board_id).await.unwrap_or_default();
+        let mut location = Value::Null;
+        let mut jql = Value::Null;
+        if projects.is_empty() {
+            let config = self.board_configuration(board_id).await?;
+            location = config.get("location").cloned().unwrap_or(Value::Null);
+            let filter_id = config
+                .get("filter")
+                .and_then(|f| f.get("id"))
+                .and_then(|id| {
+                    id.as_str()
+                        .map(String::from)
+                        .or_else(|| id.as_u64().map(|n| n.to_string()))
+                });
+            if let Some(id) = filter_id {
+                if let Ok(filter) = self.get(self.api(&format!("filter/{id}"))).await {
+                    jql = filter.get("jql").cloned().unwrap_or(Value::Null);
+                }
+            }
+        }
+        Ok(serde_json::json!({ "projects": projects, "location": location, "jql": jql }))
+    }
+
+    async fn board_project_list(&self, board_id: u64) -> Result<Vec<Value>> {
         let mut all = Vec::new();
         let mut start_at = 0usize;
         loop {
@@ -360,7 +388,7 @@ impl JiraClient {
             }
             start_at += n;
         }
-        Ok(Value::Array(all))
+        Ok(all)
     }
 
     /// Board configuration: columns with their mapped statuses, filter, etc.

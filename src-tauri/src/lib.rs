@@ -384,7 +384,7 @@ async fn get_board_projects(
     prefer_cache: bool,
 ) -> Result<Option<CachedResponse>> {
     let client = state.client()?;
-    let key = format!("board:{board_id}:projects");
+    let key = format!("board:{board_id}:project-info");
     cached_or_fetch(&state, &key, prefer_cache, async {
         client.board_projects(board_id).await
     })

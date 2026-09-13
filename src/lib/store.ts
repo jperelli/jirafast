@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { api, errorMessage, swr } from "./api";
 import { columnsOf, doneWindowJql, groupByColumn, loadDoneWindow, saveDoneWindow, type DoneWindow } from "./board";
-import type { Board, BoardConfig, Filter, Issue, JiraUser, Project, PublicSettings, SearchResult, SettingsInput } from "./types";
+import type { Board, BoardConfig, BoardProjectInfo, Filter, Issue, JiraUser, Project, PublicSettings, SearchResult, SettingsInput } from "./types";
 
 export interface QuickView {
   id: string;
@@ -52,8 +52,8 @@ export interface AppState {
   filters: Filter[];
   projects: Project[];
   boards: Board[];
-  /** Board id -> keys of the projects it belongs to (resolved when `location` is missing). */
-  boardProjects: Record<number, string[]>;
+  /** Board id -> what Jira says about its project(s) (resolved when `location` is missing). */
+  boardProjects: Record<number, BoardProjectInfo>;
 
   view: View;
   /** Active board in board view; `issues` then holds its cards in column order. */
@@ -248,7 +248,7 @@ export const app = {
       pending.map((b) =>
         swr(
           (pc) => api.getBoardProjects(b.id, pc),
-          (projects) => set((s) => ({ boardProjects: { ...s.boardProjects, [b.id]: projects.map((p) => p.key) } })),
+          (info) => set((s) => ({ boardProjects: { ...s.boardProjects, [b.id]: info } })),
         ),
       ),
     );

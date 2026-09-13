@@ -214,6 +214,13 @@ export interface Board {
   location?: { projectKey?: string; projectName?: string; displayName?: string };
 }
 
+/** What `get_board_projects` learns about a board's project(s). */
+export interface BoardProjectInfo {
+  projects: Project[];
+  location: { type?: string; key?: string; id?: string | number; name?: string } | null;
+  jql: string | null;
+}
+
 export interface BoardColumn {
   name: string;
   statuses: { id: string }[];

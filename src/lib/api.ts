@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Board,
   BoardConfig,
+  BoardProjectInfo,
   Cached,
   Comment,
   CreateMeta,
@@ -54,7 +55,7 @@ export const api = {
   getProjects: (preferCache: boolean) => invoke<Cached<Project[]> | null>("get_projects", { preferCache }),
   getBoards: (preferCache: boolean) => invoke<Cached<Board[]> | null>("get_boards", { preferCache }),
   getBoardProjects: (boardId: number, preferCache: boolean) =>
-    invoke<Cached<Project[]> | null>("get_board_projects", { boardId, preferCache }),
+    invoke<Cached<BoardProjectInfo> | null>("get_board_projects", { boardId, preferCache }),
   getBoardConfiguration: (boardId: number, preferCache: boolean) =>
     invoke<Cached<BoardConfig> | null>("get_board_configuration", { boardId, preferCache }),
   getBoardIssues: (boardId: number, jql: string, preferCache: boolean) =>
