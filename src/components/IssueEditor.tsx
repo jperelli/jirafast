@@ -5,6 +5,8 @@ import { app, useApp, useBaseUrl, type EditorMode } from "../lib/store";
 import { api, errorMessage, swr } from "../lib/api";
 import type { CreateMeta, CreateMetaIssueType, FieldMetaMap, Issue, IssueFieldsInput, JiraUser, Named } from "../lib/types";
 import { htmlToWiki, renderedToEditorHtml, roundTrips } from "../lib/wiki";
+import { genericFields, initialValue, sameValue, toPayload, type FieldValue, type GenericField } from "../lib/fields";
+import FieldControl from "./FieldControl";
 import RichEditor from "./RichEditor";
 import css from "./IssueEditor.module.css";
 
@@ -24,6 +26,8 @@ interface Form {
   projectKey: string;
   issueTypeId: string;
   parentKey: string;
+  /** Every other editmeta field, keyed by field id (see lib/fields). */
+  extra: Record<string, FieldValue>;
 }
 
 const EMPTY_FORM: Form = {
@@ -40,6 +44,7 @@ const EMPTY_FORM: Form = {
   projectKey: "",
   issueTypeId: "",
   parentKey: "",
+  extra: {},
 };
 
 function fallbackMeta(): FieldMetaMap {
@@ -120,6 +125,9 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
   const has = (name: string) => name in fields;
   const allowed = (name: string): Array<Named & { id: string }> =>
     (fields[name]?.allowedValues ?? []).filter((v): v is Named & { id: string } => typeof v.id === "string");
+  const generic = useMemo(() => genericFields(fields), [fields]);
+  const extraValue = (g: GenericField): FieldValue => form.extra[g.id] ?? initialValue(g.kind, g.meta, undefined);
+  const setExtra = (id: string, v: FieldValue) => setForm((f) => ({ ...f, extra: { ...f.extra, [id]: v } }));
 
   const title = isCreate ? "New issue" : (key ?? "");
 
@@ -155,10 +163,14 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
     const issue = issueRes?.value;
     if (!issue) throw new Error(`Issue ${k} not found`);
     setOriginal(issue);
-    setMeta(editMeta?.fields ?? fallbackMeta());
+    const metaFields = editMeta?.fields ?? fallbackMeta();
+    setMeta(metaFields);
     const f = issue.fields;
+    const extra: Record<string, FieldValue> = {};
+    for (const g of genericFields(metaFields)) extra[g.id] = initialValue(g.kind, g.meta, f[g.id]);
     setForm({
       ...EMPTY_FORM,
+      extra,
       summary: f.summary ?? "",
       description: f.description ?? "",
       environment: f.environment ?? "",
@@ -199,7 +211,7 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
   }
 
   function onProjectChange(pk: string) {
-    patch({ projectKey: pk, issueTypeId: "" });
+    patch({ projectKey: pk, issueTypeId: "", extra: {} });
     void loadCreateMeta(pk).catch((e) => app.notify(errorMessage(e), "error"));
   }
 
@@ -259,6 +271,12 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
       if (form.unassign && f.assignee) out.assignee = { name: null };
       else if (!form.unassign && a && a !== (f.assignee?.name ?? "")) out.assignee = { name: a };
     }
+    for (const g of generic) {
+      if (g.kind === "unsupported") continue;
+      const now = toPayload(g.kind, g.meta, extraValue(g));
+      const was = toPayload(g.kind, g.meta, initialValue(g.kind, g.meta, f[g.id]));
+      if (!sameValue(now, was)) out[g.id] = now;
+    }
     return out;
   }
 
@@ -277,6 +295,11 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
     if (has("duedate") && form.duedate) out.duedate = form.duedate;
     if (has("assignee") && form.assignee.trim()) out.assignee = { name: form.assignee.trim() };
     if (issueType?.subtask && form.parentKey.trim()) out.parent = { key: form.parentKey.trim().toUpperCase() };
+    for (const g of generic) {
+      if (g.kind === "unsupported" || !(g.id in form.extra)) continue;
+      const v = toPayload(g.kind, g.meta, form.extra[g.id]);
+      if (v != null && !(Array.isArray(v) && !v.length)) out[g.id] = v;
+    }
     return out;
   }
 
@@ -602,6 +625,11 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
                     <textarea value={form.environment} onChange={(e) => patch({ environment: e.target.value })} rows={3} placeholder="Wiki markup"></textarea>
                   </label>
                 )}
+
+                {generic.length > 0 && <div className={css.divider}></div>}
+                {generic.map((g) => (
+                  <FieldControl key={g.id} field={g} value={extraValue(g)} onChange={(v) => setExtra(g.id, v)} allowEmpty={isCreate} me={me} />
+                ))}
               </>
             )}
           </aside>

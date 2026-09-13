@@ -40,7 +40,7 @@ export interface FieldMeta {
   name: string;
   schema?: { type: string; items?: string; system?: string; custom?: string };
   operations?: string[];
-  allowedValues?: Named[];
+  allowedValues?: (Named & { value?: string; children?: Named[] })[];
   autoCompleteUrl?: string;
 }
 
@@ -72,6 +72,8 @@ export interface IssueFieldsInput {
   components?: { id: string }[];
   fixVersions?: { id: string }[];
   duedate?: string | null;
+  /** Any other field from editmeta (custom fields, reporter, timetracking, ...). */
+  [field: string]: unknown;
 }
 
 export interface IssueType extends Named {

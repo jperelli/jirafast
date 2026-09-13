@@ -136,9 +136,13 @@
 .check input {
   width: auto;
 }
-.assignee .row {
+.row {
   display: flex;
   gap: 6px;
+}
+.divider {
+  border-top: 1px solid var(--border);
+  margin: 4px 0;
 }
 .small {
   padding: 2px 8px;

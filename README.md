@@ -41,8 +41,12 @@ description and comments should get the whole screen.
 
 - **Edit (`e`)** opens a full-window zen editor: only the summary and the
   description. `☰ Fields` / `Ctrl+B` (`Ctrl+Shift+F` while typing in the
-  rich editor) slides in a left sidebar with priority, assignee, labels,
-  components, fix versions, due date and environment, driven by `editmeta`.
+  rich editor) slides in a left sidebar with **every field on the issue's edit
+  screen**, driven by `editmeta`: priority, assignee, labels, components, fix
+  versions, due date, environment, reporter, time tracking and all custom
+  fields (text, number, date/datetime, select, checkboxes/multi-select,
+  cascading select, user and multi-user pickers, URLs…). Only fields you
+  changed are sent on save.
 - **New issue (`n` or `＋`)** uses the same editor with project, issue type and
   parent (for sub-tasks) from `createmeta`.
 - The description is edited as **rich text** (TipTap: headings, lists, links,

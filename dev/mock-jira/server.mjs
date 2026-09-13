@@ -120,6 +120,17 @@ const LOREM = [
 ];
 const pick = (arr, i) => arr[i % arr.length];
 
+const opt = (id, value) => ({ self: `${BASE}/rest/api/2/customFieldOption/${id}`, id: String(id), value });
+const CUSTOM_OPTIONS = {
+  severity: [opt(10200, "S1 - Critical"), opt(10201, "S2 - Major"), opt(10202, "S3 - Minor")],
+  platform: [opt(10210, "Linux"), opt(10211, "Windows"), opt(10212, "macOS")],
+  area: [
+    { ...opt(10220, "Backend"), children: [opt(10221, "REST"), opt(10222, "Cache")] },
+    { ...opt(10223, "Frontend"), children: [opt(10224, "Editor"), opt(10225, "Board")] },
+  ],
+};
+const CF = "com.atlassian.jira.plugin.system.customfieldtypes:";
+
 let nextCommentId = 20000;
 const issues = new Map();
 const projectCounters = new Map();
@@ -164,6 +175,14 @@ function mkIssue({ proj, type, summary, status, priority, assignee, reporter, la
       votes: { self: `${BASE}/rest/api/2/issue/${key}/votes`, votes: 0, hasVoted: false },
       timetracking: n % 3 === 0 ? { originalEstimate: "2d", remainingEstimate: "1d 4h", timeSpent: "4h" } : {},
       customfield_10016: n % 2 ? 3 : 5, // story points
+      customfield_10100: pick([null, CUSTOM_OPTIONS.severity[0], CUSTOM_OPTIONS.severity[1]], n), // single select
+      customfield_10101: n % 2 ? [CUSTOM_OPTIONS.platform[0], CUSTOM_OPTIONS.platform[2]] : [], // multi checkboxes
+      customfield_10102: n % 3 === 0 ? "Reproduced on staging with the *default* config." : null, // textarea
+      customfield_10103: n % 4 === 0 ? daysAgoIso(-3) : null, // datetime
+      customfield_10104: n % 2 ? users.alice : null, // user picker
+      customfield_10105: n % 3 === 1 ? { ...opt(10220, "Backend"), child: CUSTOM_OPTIONS.area[0].children[1] } : null, // cascading
+      customfield_10106: `https://example.com/ticket/${n}`, // url
+      customfield_10107: n % 2 ? [users.bob] : [], // multi user
     },
   };
   issues.set(key, issue);
@@ -553,7 +572,21 @@ function fieldMeta(proj, { forCreate = false, type = null } = {}) {
     duedate: { required: false, schema: { type: "date", system: "duedate" }, name: "Due Date", operations: ["set"] },
     environment: { required: false, schema: { type: "string", system: "environment" }, name: "Environment", operations: ["set"] },
     fixVersions: { required: false, schema: { type: "array", items: "version", system: "fixVersions" }, name: "Fix Version/s", operations: ["set", "add", "remove"], allowedValues: [{ id: "12000", name: "10.4.0", released: false }] },
+    timetracking: { required: false, schema: { type: "timetracking", system: "timetracking" }, name: "Time Tracking", operations: ["set", "edit"] },
+    customfield_10016: { required: false, schema: { type: "number", custom: `${CF}float`, customId: 10016 }, name: "Story Points", operations: ["set"] },
+    customfield_10100: { required: false, schema: { type: "option", custom: `${CF}select`, customId: 10100 }, name: "Severity", operations: ["set"], allowedValues: CUSTOM_OPTIONS.severity },
+    customfield_10101: { required: false, schema: { type: "array", items: "option", custom: `${CF}multicheckboxes`, customId: 10101 }, name: "Platform", operations: ["add", "set", "remove"], allowedValues: CUSTOM_OPTIONS.platform },
+    customfield_10102: { required: false, schema: { type: "string", custom: `${CF}textarea`, customId: 10102 }, name: "Steps to Reproduce", operations: ["set"] },
+    customfield_10103: { required: false, schema: { type: "datetime", custom: `${CF}datetime`, customId: 10103 }, name: "Target Release Date", operations: ["set"] },
+    customfield_10104: { required: false, schema: { type: "user", custom: `${CF}userpicker`, customId: 10104 }, name: "Reviewer", autoCompleteUrl: `${BASE}/rest/api/1.0/users/picker?fieldName=customfield_10104&query=`, operations: ["set"] },
+    customfield_10105: { required: false, schema: { type: "option-with-child", custom: `${CF}cascadingselect`, customId: 10105 }, name: "Area", operations: ["set"], allowedValues: CUSTOM_OPTIONS.area },
+    customfield_10106: { required: false, schema: { type: "string", custom: `${CF}url`, customId: 10106 }, name: "External Ticket", operations: ["set"] },
+    customfield_10107: { required: false, schema: { type: "array", items: "user", custom: `${CF}multiuserpicker`, customId: 10107 }, name: "Stakeholders", operations: ["add", "set", "remove"] },
+    customfield_10108: { required: false, schema: { type: "array", items: "json", custom: "com.pyxis.greenhopper.jira:gh-sprint", customId: 10108 }, name: "Sprint", operations: ["set"] },
   };
+  if (!forCreate) {
+    f.reporter = { required: false, schema: { type: "user", system: "reporter" }, name: "Reporter", operations: ["set"] };
+  }
   if (forCreate) {
     f.project = { required: true, schema: { type: "project", system: "project" }, name: "Project", operations: ["set"], allowedValues: [proj] };
     f.issuetype = { required: true, schema: { type: "issuetype", system: "issuetype" }, name: "Issue Type", operations: [], allowedValues: [type] };
@@ -625,9 +658,66 @@ function applyFields(issue, fields, { creating = false } = {}) {
         if (value != null && !/^\d{4}-\d{2}-\d{2}$/.test(value)) errors.duedate = "Error parsing date string.";
         else issue.fields.duedate = value ?? null;
         break;
+      case "reporter":
+        if (value == null) errors.reporter = "Reporter is required.";
+        else if (value.name === "-1") issue.fields.reporter = ME;
+        else if (users[value.name]) issue.fields.reporter = users[value.name];
+        else errors.reporter = `User '${value.name}' does not exist.`;
+        break;
+      case "timetracking":
+        issue.fields.timetracking = { ...issue.fields.timetracking, ...(value ?? {}) };
+        break;
+      case "customfield_10016":
+        if (value != null && typeof value !== "number") errors[name] = "Number value expected as 'Story Points'.";
+        else issue.fields[name] = value ?? null;
+        break;
+      case "customfield_10100": {
+        const o = value == null ? null : CUSTOM_OPTIONS.severity.find((x) => x.id === String(value.id) || x.value === value.value);
+        if (value != null && !o) errors[name] = "Option id 'null' is not valid";
+        else issue.fields[name] = o;
+        break;
+      }
+      case "customfield_10101": {
+        const picked = (value ?? []).map((v) => CUSTOM_OPTIONS.platform.find((x) => x.id === String(v.id) || x.value === v.value));
+        if (picked.some((x) => !x)) errors[name] = "Option id 'null' is not valid";
+        else issue.fields[name] = picked;
+        break;
+      }
+      case "customfield_10102":
+      case "customfield_10106":
+        issue.fields[name] = value == null ? null : String(value);
+        break;
+      case "customfield_10103":
+        if (value != null && Number.isNaN(new Date(String(value).replace(/([+-]\d{2})(\d{2})$/, "$1:$2")).getTime())) errors[name] = "Error parsing time: " + value;
+        else issue.fields[name] = value ?? null;
+        break;
+      case "customfield_10104":
+        if (value == null) issue.fields[name] = null;
+        else if (users[value.name]) issue.fields[name] = users[value.name];
+        else errors[name] = `User '${value.name}' does not exist.`;
+        break;
+      case "customfield_10105": {
+        if (value == null) {
+          issue.fields[name] = null;
+          break;
+        }
+        const parent = CUSTOM_OPTIONS.area.find((x) => x.id === String(value.id));
+        const child = parent && value.child ? parent.children.find((c) => c.id === String(value.child.id)) : null;
+        if (!parent || (value.child && !child)) errors[name] = "Option id 'null' is not valid";
+        else {
+          const { children: _c, ...p } = parent;
+          issue.fields[name] = child ? { ...p, child } : p;
+        }
+        break;
+      }
+      case "customfield_10107": {
+        const picked = (value ?? []).map((u) => users[u.name]);
+        if (picked.some((u) => !u)) errors[name] = "User does not exist.";
+        else issue.fields[name] = picked;
+        break;
+      }
       case "project":
       case "issuetype":
-      case "reporter":
         if (!creating) errors[name] = `Field '${name}' cannot be set. It is not on the appropriate screen, or unknown.`;
         break;
       default:
