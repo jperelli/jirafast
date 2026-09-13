@@ -454,7 +454,10 @@ const boards = [
 function mkBoard(id, name, type, proj, columns) {
   const self = `${BASE}/rest/agile/1.0/board/${id}`;
   return {
-    summary: { id, self, name, type, location: { projectId: Number(proj.id), displayName: `${proj.name} (${proj.key})`, projectName: proj.name, projectKey: proj.key, projectTypeKey: "software", avatarURI: proj.avatarUrls["16x16"], name: `${proj.name} (${proj.key})` } },
+    // Like Jira Server/DC: board summaries carry no `location`; the project
+    // association is exposed through GET board/{id}/project instead.
+    summary: { id, self, name, type },
+    projects: [proj],
     jql: `project = ${proj.key} ORDER BY Rank ASC`,
     configuration: {
       id,
@@ -866,6 +869,10 @@ const server = http.createServer(async (req, res) => {
       const sub = bm[2] ?? "";
       if (sub === "") return json(res, 200, board.summary);
       if (sub === "configuration") return json(res, 200, board.configuration);
+      if (sub === "project") {
+        const values = board.projects.map((p) => ({ id: p.id, key: p.key, name: p.name, self: p.self, avatarUrls: p.avatarUrls, projectTypeKey: "software", simplified: false }));
+        return json(res, 200, { maxResults: 50, startAt: 0, total: values.length, isLast: true, values });
+      }
       if (sub === "issue") {
         const startAt = Number(url.searchParams.get("startAt") ?? 0);
         const maxResults = Math.min(Number(url.searchParams.get("maxResults") ?? 50), 200);

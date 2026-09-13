@@ -89,31 +89,38 @@ export function doneWindowJql(columns: ColumnDef[], window: DoneWindow): string 
   return `${notDone} OR resolutiondate >= -${days}d OR (resolution is EMPTY AND updated >= -${days}d)`;
 }
 
-export interface BoardFolder {
+export interface ProjectFolder {
   key: string;
   name: string;
+  /** The Jira project, or null for the "other boards" bucket. */
+  project: Project | null;
   boards: Board[];
 }
 
-const OTHER_FOLDER = "__other";
+export const OTHER_FOLDER = "__other";
 
-/** Boards grouped by the project they live in (sidebar folders), projects in Jira's order. */
-export function groupBoards(boards: Board[], projects: Project[]): BoardFolder[] {
-  const byKey = new Map<string, BoardFolder>();
+/** Project keys a board belongs to: its `location` (Cloud / newer DC) or the resolved board projects. */
+function projectKeysOf(board: Board, boardProjects: Record<number, string[]>): string[] {
+  if (board.location?.projectKey) return [board.location.projectKey];
+  return boardProjects[board.id] ?? [];
+}
+
+/**
+ * Sidebar tree: every project (in Jira's order) with the boards that belong to
+ * it, followed by an "other" folder for boards that map to no known project.
+ * A board spanning several projects is listed under each of them.
+ */
+export function groupBoards(boards: Board[], projects: Project[], boardProjects: Record<number, string[]>): ProjectFolder[] {
+  const folders = new Map<string, ProjectFolder>(projects.map((p) => [p.key, { key: p.key, name: p.name, project: p, boards: [] }]));
+  const other: ProjectFolder = { key: OTHER_FOLDER, name: "Other boards", project: null, boards: [] };
   for (const b of boards) {
-    const pk = b.location?.projectKey ?? OTHER_FOLDER;
-    let folder = byKey.get(pk);
-    if (!folder) {
-      const project = projects.find((p) => p.key === pk);
-      const name = project?.name ?? b.location?.projectName ?? (pk === OTHER_FOLDER ? "Other boards" : pk);
-      folder = { key: pk, name, boards: [] };
-      byKey.set(pk, folder);
-    }
-    folder.boards.push(b);
+    const keys = projectKeysOf(b, boardProjects).filter((k) => folders.has(k));
+    if (!keys.length) other.boards.push(b);
+    for (const k of keys) folders.get(k)?.boards.push(b);
   }
-  const order = new Map(projects.map((p, i) => [p.key, i]));
-  const rank = (f: BoardFolder) => (f.key === OTHER_FOLDER ? Number.MAX_SAFE_INTEGER : (order.get(f.key) ?? order.size));
-  return [...byKey.values()].sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name));
+  const out = [...folders.values()];
+  if (other.boards.length) out.push(other);
+  return out;
 }
 
 const OPEN_FOLDERS_KEY = "jirafast:openBoardFolders";

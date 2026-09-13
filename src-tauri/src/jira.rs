@@ -336,6 +336,33 @@ impl JiraClient {
         Ok(Value::Array(all))
     }
 
+    /// Projects a board is associated with (its filter's projects). Jira
+    /// Server boards often lack a `location`, so this is how they get grouped.
+    pub async fn board_projects(&self, board_id: u64) -> Result<Value> {
+        let mut all = Vec::new();
+        let mut start_at = 0usize;
+        loop {
+            let url = format!(
+                "{}?startAt={start_at}&maxResults=50",
+                self.agile(&format!("board/{board_id}/project"))
+            );
+            let page = self.get(url).await?;
+            let values = page
+                .get("values")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let n = values.len();
+            all.extend(values);
+            let is_last = page.get("isLast").and_then(Value::as_bool).unwrap_or(true);
+            if is_last || n == 0 || all.len() >= 500 {
+                break;
+            }
+            start_at += n;
+        }
+        Ok(Value::Array(all))
+    }
+
     /// Board configuration: columns with their mapped statuses, filter, etc.
     pub async fn board_configuration(&self, board_id: u64) -> Result<Value> {
         self.get(self.agile(&format!("board/{board_id}/configuration")))

@@ -52,6 +52,8 @@ export interface AppState {
   filters: Filter[];
   projects: Project[];
   boards: Board[];
+  /** Board id -> keys of the projects it belongs to (resolved when `location` is missing). */
+  boardProjects: Record<number, string[]>;
 
   view: View;
   /** Active board in board view; `issues` then holds its cards in column order. */
@@ -90,6 +92,7 @@ const initial: AppState = {
   filters: [],
   projects: [],
   boards: [],
+  boardProjects: {},
   view: "list",
   board: null,
   boardConfig: null,
@@ -219,6 +222,7 @@ export const app = {
       filters: [],
       projects: [],
       boards: [],
+      boardProjects: {},
       view: "list",
       board: null,
       boardConfig: null,
@@ -230,8 +234,24 @@ export const app = {
     await Promise.allSettled([
       swr(api.getFavouriteFilters, (filters) => set({ filters })),
       swr(api.getProjects, (projects) => set({ projects })),
-      swr(api.getBoards, (boards) => set({ boards })),
+      swr(api.getBoards, (boards) => {
+        set({ boards });
+        void app.resolveBoardProjects(boards);
+      }),
     ]);
+  },
+
+  /** Jira Server boards usually come without `location`; ask the Agile API which projects they cover. */
+  async resolveBoardProjects(boards: Board[]) {
+    const pending = boards.filter((b) => !b.location?.projectKey && !(b.id in get().boardProjects));
+    await Promise.allSettled(
+      pending.map((b) =>
+        swr(
+          (pc) => api.getBoardProjects(b.id, pc),
+          (projects) => set((s) => ({ boardProjects: { ...s.boardProjects, [b.id]: projects.map((p) => p.key) } })),
+        ),
+      ),
+    );
   },
 
   async runSearch(jql: string, viewId = "custom", viewName = "Search") {

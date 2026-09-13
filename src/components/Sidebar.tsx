@@ -1,26 +1,32 @@
 import { useEffect, useMemo, useState } from "react";
 import { app, QUICK_VIEWS, useApp, useBaseUrl } from "../lib/store";
 import { errorMessage } from "../lib/api";
-import { groupBoards, loadOpenFolders, saveOpenFolders } from "../lib/board";
+import { groupBoards, loadOpenFolders, saveOpenFolders, type ProjectFolder } from "../lib/board";
 import css from "./Sidebar.module.css";
+
+const PROJECT_LIMIT = 12;
 
 export default function Sidebar() {
   const me = useApp((s) => s.me);
   const filters = useApp((s) => s.filters);
   const projects = useApp((s) => s.projects);
   const boards = useApp((s) => s.boards);
+  const boardProjects = useApp((s) => s.boardProjects);
   const viewId = useApp((s) => s.viewId);
   const baseUrl = useBaseUrl();
   const [showAllProjects, setShowAllProjects] = useState(false);
-  const visibleProjects = showAllProjects ? projects : projects.slice(0, 12);
-  const boardFolders = useMemo(() => groupBoards(boards, projects), [boards, projects]);
+  const folders = useMemo(() => groupBoards(boards, projects, boardProjects), [boards, projects, boardProjects]);
   const [openFolders, setOpenFolders] = useState<Set<string>>(loadOpenFolders);
   const activeBoardId = viewId.startsWith("board:") ? Number(viewId.slice(6)) : null;
+  const isActiveFolder = (f: ProjectFolder) => f.boards.some((b) => b.id === activeBoardId) || viewId === `project:${f.key}`;
+  const visibleFolders = showAllProjects
+    ? folders
+    : folders.filter((f, i) => i < PROJECT_LIMIT || f.boards.length > 0 || isActiveFolder(f));
 
   useEffect(() => {
-    const folder = boardFolders.find((f) => f.boards.some((b) => b.id === activeBoardId));
+    const folder = folders.find((f) => f.boards.some((b) => b.id === activeBoardId) || viewId === `project:${f.key}`);
     if (folder) setOpenFolders((prev) => (prev.has(folder.key) ? prev : new Set(prev).add(folder.key)));
-  }, [activeBoardId, boardFolders]);
+  }, [activeBoardId, viewId, folders]);
 
   function toggleFolder(key: string) {
     setOpenFolders((prev) => {
@@ -83,24 +89,37 @@ export default function Sidebar() {
         </div>
       )}
 
-      {boards.length > 0 && (
+      {folders.length > 0 && (
         <div className={css.section}>
-          <h3>Boards</h3>
-          {boardFolders.map((folder) => {
-            const hasActive = folder.boards.some((b) => b.id === activeBoardId);
+          <h3>Projects</h3>
+          {visibleFolders.map((folder) => {
             const open = openFolders.has(folder.key);
+            const p = folder.project;
             return (
               <div key={folder.key} className={css.folder}>
                 <button
-                  className={`${css.item} ${css.folderHead} ${hasActive ? css.folderActive : ""}`}
+                  className={`${css.item} ${css.folderHead} ${isActiveFolder(folder) ? css.folderActive : ""}`}
                   aria-expanded={open}
-                  title={folder.name}
+                  title={p ? `${p.name} (${p.key})` : folder.name}
                   onClick={() => toggleFolder(folder.key)}
                 >
                   <span className={`${css.chevron} ${open ? css.chevronOpen : ""}`}>▸</span>
+                  {p && <span className={`${css.pkey} mono`}>{p.key}</span>}
                   <span className={css.pname}>{folder.name}</span>
-                  <span className={`${css.count} muted`}>{folder.boards.length}</span>
+                  {folder.boards.length > 0 && <span className={`${css.count} muted`}>{folder.boards.length}</span>}
                 </button>
+                {open && p && (
+                  <button
+                    className={`${item(viewId === `project:${p.key}`)} ${css.nested}`}
+                    title={`Unresolved issues in ${p.name}`}
+                    onClick={() =>
+                      pickView(`project:${p.key}`, p.name, `project = "${p.key}" AND resolution = Unresolved ORDER BY updated DESC`)
+                    }
+                  >
+                    <span className={`${css.pkey} ${css.btype}`}>issues</span>
+                    <span className={css.pname}>Open issues</span>
+                  </button>
+                )}
                 {open &&
                   folder.boards.map((b) => (
                     <button
@@ -116,30 +135,11 @@ export default function Sidebar() {
               </div>
             );
           })}
-        </div>
-      )}
-
-      {projects.length > 0 && (
-        <div className={css.section}>
-          <h3>Projects</h3>
-          {visibleProjects.map((p) => (
-            <button
-              key={p.id}
-              className={item(viewId === `project:${p.key}`)}
-              title={p.name}
-              onClick={() =>
-                pickView(`project:${p.key}`, p.name, `project = "${p.key}" AND resolution = Unresolved ORDER BY updated DESC`)
-              }
-            >
-              <span className={`${css.pkey} mono`}>{p.key}</span>
-              <span className={css.pname}>{p.name}</span>
-            </button>
-          ))}
-          {projects.length > 12 && (
+          {folders.length > visibleFolders.length || showAllProjects ? (
             <button className={`${css.item} ${css.more} muted`} onClick={() => setShowAllProjects((v) => !v)}>
-              {showAllProjects ? "Show fewer" : `Show all ${projects.length}`}
+              {showAllProjects ? "Show fewer" : `Show all ${projects.length} projects`}
             </button>
-          )}
+          ) : null}
         </div>
       )}
 
