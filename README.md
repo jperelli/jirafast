@@ -36,6 +36,19 @@ description and comments should get the whole screen.
 
 ![Focus mode + fullscreen](docs/focus-fullscreen.png)
 
+## Editing and creating issues
+
+- **Edit (`e`)** opens a full-window zen editor: only the summary and the
+  description (Jira wiki markup, as Jira Server stores it). `☰ Fields` /
+  `Ctrl+B` slides in a left sidebar with priority, assignee, labels,
+  components, fix versions, due date and environment, driven by `editmeta`.
+- **New issue (`n` or `＋`)** uses the same editor with project, issue type and
+  parent (for sub-tasks) from `createmeta`.
+- `Ctrl+P` shows a live preview rendered by Jira; `Ctrl+S` saves; `Esc` cancels
+  (asks before discarding changes).
+
+![Editor](docs/editor.png)
+
 ## Features
 
 - Personal Access Token (recommended) or username/password auth, optional
@@ -56,6 +69,8 @@ description and comments should get the whole screen.
 | --- | --- |
 | `j` / `k`, `↓` / `↑` | next / previous issue |
 | `f` | toggle focus mode |
+| `e` | edit the issue |
+| `n` | new issue |
 | `F11` | toggle fullscreen |
 | `/` | search |
 | `c` | add a comment |

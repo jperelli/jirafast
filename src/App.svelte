@@ -6,6 +6,7 @@
   import Sidebar from "./components/Sidebar.svelte";
   import IssueList from "./components/IssueList.svelte";
   import IssueView from "./components/IssueView.svelte";
+  import IssueEditor from "./components/IssueEditor.svelte";
   import Toast from "./components/Toast.svelte";
   import ShortcutsHelp from "./components/ShortcutsHelp.svelte";
 
@@ -35,7 +36,7 @@
       void toggleFullscreen();
       return;
     }
-    if (app.screen !== "main") return;
+    if (app.screen !== "main" || app.editor) return;
     if (e.key === "Escape") {
       if (showHelp) showHelp = false;
       else if (isTyping(e)) (e.target as HTMLElement).blur();
@@ -81,6 +82,16 @@
       case "u":
         app.back();
         break;
+      case "e":
+        if (app.selectedKey) {
+          e.preventDefault();
+          app.editIssue();
+        }
+        break;
+      case "n":
+        e.preventDefault();
+        app.newIssue();
+        break;
       case "?":
         showHelp = !showHelp;
         break;
@@ -104,6 +115,11 @@
     {/if}
     <IssueView />
   </div>
+  {#if app.editor}
+    {#key app.editor}
+      <IssueEditor mode={app.editor} />
+    {/key}
+  {/if}
 {/if}
 
 <Toast />

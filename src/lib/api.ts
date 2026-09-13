@@ -3,8 +3,11 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   Cached,
   Comment,
+  CreateMeta,
+  EditMeta,
   Filter,
   Issue,
+  IssueFieldsInput,
   JiraUser,
   Project,
   PublicSettings,
@@ -31,6 +34,13 @@ export const api = {
     invoke<void>("prefetch_issues", { keys, maxAgeSecs }),
 
   addComment: (key: string, body: string) => invoke<Comment>("add_comment", { key, body }),
+  updateIssue: (key: string, fields: IssueFieldsInput) => invoke<Issue | null>("update_issue", { key, fields }),
+  createIssue: (fields: IssueFieldsInput) => invoke<Issue>("create_issue", { fields }),
+  getEditMeta: (key: string) => invoke<EditMeta>("get_edit_meta", { key }),
+  getCreateMeta: (projectKey: string, preferCache: boolean) =>
+    invoke<Cached<CreateMeta> | null>("get_create_meta", { projectKey, preferCache }),
+  renderWiki: (markup: string, issueKey?: string) =>
+    invoke<string>("render_wiki", { markup, issueKey: issueKey ?? null }),
   getTransitions: (key: string) => invoke<{ transitions: Transition[] }>("get_transitions", { key }),
   doTransition: (key: string, transitionId: string, comment?: string) =>
     invoke<Issue | null>("do_transition", { key, transitionId, comment: comment ?? null }),

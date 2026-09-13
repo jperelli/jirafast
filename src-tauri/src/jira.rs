@@ -204,6 +204,62 @@ impl JiraClient {
         self.get(url).await
     }
 
+    /// `PUT /issue/{key}` with `{ "fields": {...} }`. Jira answers 204.
+    pub async fn update_issue(&self, key: &str, fields: &Value) -> Result<Value> {
+        let body = serde_json::json!({ "fields": fields });
+        self.put(self.api(&format!("issue/{}", key)), &body).await
+    }
+
+    /// `POST /issue`; returns `{ id, key, self }`.
+    pub async fn create_issue(&self, fields: &Value) -> Result<Value> {
+        let body = serde_json::json!({ "fields": fields });
+        self.post(self.api("issue"), &body).await
+    }
+
+    /// Editable fields for an issue, with `allowedValues` for pickers.
+    pub async fn edit_meta(&self, key: &str) -> Result<Value> {
+        self.get(self.api(&format!("issue/{}/editmeta", key))).await
+    }
+
+    /// Issue types and their fields for one project. Server/DC still serves
+    /// the classic `createmeta` endpoint with the `expand` parameter.
+    pub async fn create_meta(&self, project_key: &str) -> Result<Value> {
+        let url = format!(
+            "{}?projectKeys={}&expand=projects.issuetypes.fields",
+            self.api("issue/createmeta"),
+            urlencode(project_key)
+        );
+        self.get(url).await
+    }
+
+    /// Render wiki markup to HTML the same way Jira does for `renderedFields`.
+    /// Uses the (internal but long-standing) `/rest/api/1.0/render` resource.
+    pub async fn render_wiki(&self, markup: &str, issue_key: Option<&str>) -> Result<String> {
+        let url = format!("{}/rest/api/1.0/render", self.base_url);
+        let body = serde_json::json!({
+            "rendererType": "atlassian-wiki-renderer",
+            "unrenderedMarkup": markup,
+            "issueKey": issue_key,
+        });
+        let resp = self
+            .http
+            .post(&url)
+            .header(CONTENT_TYPE, "application/json")
+            .header(ACCEPT, "text/html, */*")
+            .json(&body)
+            .send()
+            .await?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        if !status.is_success() {
+            return Err(JiraError::Http {
+                status: status.as_u16(),
+                message: extract_error_message(&text, status),
+            });
+        }
+        Ok(text)
+    }
+
     pub async fn add_comment(&self, key: &str, body: &str) -> Result<Value> {
         let url = format!(
             "{}?expand=renderedBody",

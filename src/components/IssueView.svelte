@@ -125,6 +125,7 @@
       <span class="grow"></span>
       {#if app.issueLoading}<span class="spin" title="Refreshing…"></span>
       {:else if app.issueFromCache}<span class="muted tiny" title="Showing cached copy; refresh failed or pending">cached</span>{/if}
+      <button class="ghost edit" onclick={() => app.editIssue()} title="Edit summary, description and fields (e)">✎ Edit</button>
       <button class="ghost" onclick={() => app.refreshIssue()} title="Refresh (r)">↻</button>
       <button class="ghost" onclick={scrollToComments} title="Jump to comments">💬 {f?.comment?.total ?? f?.comment?.comments?.length ?? 0}</button>
       <button class="ghost" class:on={app.focus} onclick={() => app.toggleFocus()} title="Focus mode: hide list & sidebar (f)">

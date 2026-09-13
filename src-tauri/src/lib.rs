@@ -236,6 +236,61 @@ async fn add_comment(state: State<'_, AppState>, key: String, body: String) -> R
 }
 
 #[tauri::command]
+async fn update_issue(state: State<'_, AppState>, key: String, fields: Value) -> Result<Value> {
+    let client = state.client()?;
+    client.update_issue(&key, &fields).await?;
+    Ok(refresh_issue(&state, &client, &key)
+        .await
+        .unwrap_or(Value::Null))
+}
+
+/// Creates the issue and returns the full, cached issue (not just `{id,key}`).
+#[tauri::command]
+async fn create_issue(state: State<'_, AppState>, fields: Value) -> Result<Value> {
+    let client = state.client()?;
+    let created = client.create_issue(&fields).await?;
+    let key = created
+        .get("key")
+        .and_then(Value::as_str)
+        .ok_or_else(|| JiraError::Decode("create response without key".into()))?
+        .to_string();
+    Ok(refresh_issue(&state, &client, &key)
+        .await
+        .unwrap_or(created))
+}
+
+#[tauri::command]
+async fn get_edit_meta(state: State<'_, AppState>, key: String) -> Result<Value> {
+    state.client()?.edit_meta(&key).await
+}
+
+#[tauri::command]
+async fn get_create_meta(
+    state: State<'_, AppState>,
+    project_key: String,
+    prefer_cache: bool,
+) -> Result<Option<CachedResponse>> {
+    let client = state.client()?;
+    let ck = format!("createmeta:{}", project_key.to_uppercase());
+    cached_or_fetch(&state, &ck, prefer_cache, async {
+        client.create_meta(&project_key).await
+    })
+    .await
+}
+
+#[tauri::command]
+async fn render_wiki(
+    state: State<'_, AppState>,
+    markup: String,
+    issue_key: Option<String>,
+) -> Result<String> {
+    state
+        .client()?
+        .render_wiki(&markup, issue_key.as_deref())
+        .await
+}
+
+#[tauri::command]
 async fn get_transitions(state: State<'_, AppState>, key: String) -> Result<Value> {
     state.client()?.transitions(&key).await
 }
@@ -417,6 +472,11 @@ pub fn run() {
             get_issue,
             prefetch_issues,
             add_comment,
+            update_issue,
+            create_issue,
+            get_edit_meta,
+            get_create_meta,
+            render_wiki,
             get_transitions,
             do_transition,
             assign_issue,

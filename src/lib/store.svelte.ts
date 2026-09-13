@@ -21,6 +21,9 @@ const JQL_HINT_RE = /(=|!=|~|\bORDER BY\b|\bAND\b|\bOR\b|\bIN\b|\bIS\b|>=|<=)/i;
 
 export type Screen = "loading" | "connect" | "main";
 
+/** Full-window editor: edit an existing issue or create a new one. */
+export type EditorMode = { kind: "edit"; key: string } | { kind: "create"; projectKey: string | null };
+
 export class AppStore {
   screen = $state<Screen>("loading");
   settings = $state<PublicSettings | null>(null);
@@ -48,6 +51,7 @@ export class AppStore {
   /** Focus mode hides the sidebar and list so description + comments get the whole window. */
   focus = $state(false);
   sidebarOpen = $state(true);
+  editor = $state<EditorMode | null>(null);
   toast = $state<{ text: string; kind: "info" | "error" } | null>(null);
 
   get baseUrl(): string {
@@ -275,6 +279,27 @@ export class AppStore {
 
   toggleFocus() {
     this.focus = !this.focus;
+  }
+
+  editIssue(key = this.selectedKey) {
+    if (key) this.editor = { kind: "edit", key };
+  }
+
+  newIssue(projectKey: string | null = this.issue?.fields.project?.key ?? null) {
+    this.editor = { kind: "create", projectKey };
+  }
+
+  closeEditor() {
+    this.editor = null;
+  }
+
+  /** After `create_issue`: show the new issue and put it at the top of the list. */
+  addCreatedIssue(issue: Issue) {
+    if (!this.issues.some((i) => i.key === issue.key)) {
+      this.issues = [issue, ...this.issues];
+      this.total += 1;
+    }
+    void this.openIssue(issue.key);
   }
 }
 

@@ -34,6 +34,46 @@ export interface Status extends Named {
   statusCategory?: StatusCategory;
 }
 
+/** One entry of `editmeta.fields` / `createmeta...issuetypes[].fields`. */
+export interface FieldMeta {
+  required: boolean;
+  name: string;
+  schema?: { type: string; items?: string; system?: string; custom?: string };
+  operations?: string[];
+  allowedValues?: Named[];
+  autoCompleteUrl?: string;
+}
+
+export type FieldMetaMap = Record<string, FieldMeta>;
+
+export interface EditMeta {
+  fields: FieldMetaMap;
+}
+
+export interface CreateMetaIssueType extends IssueType {
+  fields?: FieldMetaMap;
+}
+
+export interface CreateMeta {
+  projects: (Project & { issuetypes: CreateMetaIssueType[] })[];
+}
+
+/** Payload for `PUT/POST issue` — only the fields we edit. */
+export interface IssueFieldsInput {
+  project?: { key: string };
+  issuetype?: { id: string };
+  parent?: { key: string };
+  summary?: string;
+  description?: string | null;
+  environment?: string | null;
+  priority?: { id: string } | null;
+  assignee?: { name: string | null } | null;
+  labels?: string[];
+  components?: { id: string }[];
+  fixVersions?: { id: string }[];
+  duedate?: string | null;
+}
+
 export interface IssueType extends Named {
   subtask?: boolean;
 }

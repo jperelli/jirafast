@@ -267,6 +267,14 @@ function renderWiki(text) {
     .split(/\n{2,}/)
     .map((para) => {
       const esc = para.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+      const code = esc.match(/^\{code(?::[^}]*)?\}\n?([\s\S]*?)\n?\{code\}$/);
+      if (code) return `<div class="code panel"><div class="codeContent panelContent"><pre class="code-java">${code[1]}</pre></div></div>`;
+      const heading = esc.match(/^h([1-6])\.\s+(.*)$/);
+      if (heading) return `<h${heading[1]}>${heading[2]}</h${heading[1]}>`;
+      if (/^(\*|#|-) /m.test(esc) && esc.split("\n").every((l) => /^(\*|#|-) /.test(l))) {
+        const tag = esc.startsWith("# ") ? "ol" : "ul";
+        return `<${tag}>${esc.split("\n").map((l) => `<li>${l.slice(2)}</li>`).join("")}</${tag}>`;
+      }
       return `<p>${esc
         .replace(/\*([^*]+)\*/g, "<b>$1</b>")
         .replace(/_([^_]+)_/g, "<em>$1</em>")
@@ -442,6 +450,107 @@ function projectIssue(issue, fields) {
   return out;
 }
 
+function componentsFor(proj) {
+  const names = { PLAT: ["Client", "REST API", "Cache"], WEB: ["UI", "Build"], OPS: ["Infra"] }[proj.key] ?? [];
+  return names.map((name, i) => ({ id: String(11000 + i), name, self: `${BASE}/rest/api/2/component/${11000 + i}` }));
+}
+
+// Field metadata in the shape of `editmeta` / `createmeta` (Jira Server).
+function fieldMeta(proj, { forCreate = false, type = null } = {}) {
+  const f = {
+    summary: { required: true, schema: { type: "string", system: "summary" }, name: "Summary", operations: ["set"] },
+    description: { required: false, schema: { type: "string", system: "description" }, name: "Description", operations: ["set"] },
+    priority: { required: false, schema: { type: "priority", system: "priority" }, name: "Priority", operations: ["set"], allowedValues: Object.values(priorities) },
+    labels: { required: false, schema: { type: "array", items: "string", system: "labels" }, name: "Labels", autoCompleteUrl: `${BASE}/rest/api/1.0/labels/suggest?query=`, operations: ["add", "set", "remove"] },
+    assignee: { required: false, schema: { type: "user", system: "assignee" }, name: "Assignee", autoCompleteUrl: `${BASE}/rest/api/latest/user/assignable/search?issueKey=null&username=`, operations: ["set"] },
+    components: { required: false, schema: { type: "array", items: "component", system: "components" }, name: "Component/s", operations: ["add", "set", "remove"], allowedValues: componentsFor(proj) },
+    duedate: { required: false, schema: { type: "date", system: "duedate" }, name: "Due Date", operations: ["set"] },
+    environment: { required: false, schema: { type: "string", system: "environment" }, name: "Environment", operations: ["set"] },
+    fixVersions: { required: false, schema: { type: "array", items: "version", system: "fixVersions" }, name: "Fix Version/s", operations: ["set", "add", "remove"], allowedValues: [{ id: "12000", name: "10.4.0", released: false }] },
+  };
+  if (forCreate) {
+    f.project = { required: true, schema: { type: "project", system: "project" }, name: "Project", operations: ["set"], allowedValues: [proj] };
+    f.issuetype = { required: true, schema: { type: "issuetype", system: "issuetype" }, name: "Issue Type", operations: [], allowedValues: [type] };
+    f.reporter = { required: true, schema: { type: "user", system: "reporter" }, name: "Reporter", operations: ["set"] };
+    if (type?.subtask) f.parent = { required: true, schema: { type: "issuelink", system: "parent" }, name: "Parent", operations: ["set"] };
+  }
+  return f;
+}
+
+function createMetaFor(proj) {
+  return {
+    expand: "projects",
+    projects: [
+      {
+        expand: "issuetypes",
+        self: proj.self,
+        id: proj.id,
+        key: proj.key,
+        name: proj.name,
+        avatarUrls: proj.avatarUrls,
+        issuetypes: Object.values(types).map((t) => ({ ...t, expand: "fields", fields: fieldMeta(proj, { forCreate: true, type: t }) })),
+      },
+    ],
+  };
+}
+
+// Applies a REST `fields` object (as sent by PUT/POST issue) to an issue.
+function applyFields(issue, fields, { creating = false } = {}) {
+  const errors = {};
+  const proj = issue.fields.project;
+  for (const [name, value] of Object.entries(fields ?? {})) {
+    switch (name) {
+      case "summary":
+        if (typeof value !== "string" || !value.trim()) errors.summary = "You must specify a summary of the issue.";
+        else issue.fields.summary = value;
+        break;
+      case "description":
+      case "environment":
+        issue.fields[name] = value == null ? null : String(value);
+        if (name === "description") delete issue.renderedDescription;
+        break;
+      case "priority": {
+        const p = value && Object.values(priorities).find((x) => x.id === String(value.id) || x.name === value.name);
+        if (!p) errors.priority = "Priority is not valid.";
+        else issue.fields.priority = p;
+        break;
+      }
+      case "labels":
+        if (!Array.isArray(value) || value.some((l) => typeof l !== "string" || /\s/.test(l))) errors.labels = "Labels must be an array of strings without spaces.";
+        else issue.fields.labels = value;
+        break;
+      case "assignee":
+        if (value == null || value.name === null) issue.fields.assignee = null;
+        else if (value.name === "-1") issue.fields.assignee = ME;
+        else if (users[value.name]) issue.fields.assignee = users[value.name];
+        else errors.assignee = `User '${value.name}' does not exist.`;
+        break;
+      case "components": {
+        const all = componentsFor(proj);
+        const picked = (value ?? []).map((c) => all.find((x) => x.id === String(c.id) || x.name === c.name));
+        if (picked.some((c) => !c)) errors.components = "Component name is not valid.";
+        else issue.fields.components = picked;
+        break;
+      }
+      case "fixVersions":
+        issue.fields.fixVersions = (value ?? []).map((v) => ({ id: String(v.id ?? "12000"), name: v.name ?? "10.4.0", released: false }));
+        break;
+      case "duedate":
+        if (value != null && !/^\d{4}-\d{2}-\d{2}$/.test(value)) errors.duedate = "Error parsing date string.";
+        else issue.fields.duedate = value ?? null;
+        break;
+      case "project":
+      case "issuetype":
+      case "reporter":
+        if (!creating) errors[name] = `Field '${name}' cannot be set. It is not on the appropriate screen, or unknown.`;
+        break;
+      default:
+        errors[name] = `Field '${name}' cannot be set. It is not on the appropriate screen, or unknown.`;
+    }
+  }
+  return errors;
+}
+
 function renderedFields(issue) {
   return {
     description: issue.renderedDescription ?? renderWiki(issue.fields.description),
@@ -550,6 +659,16 @@ const server = http.createServer(async (req, res) => {
     return res.end(`<h1>Mock Jira 10.3.2</h1><p>REST at <code>${CTX}/rest/api/2/</code></p>`);
   }
 
+  // Jira's internal wiki renderer, used by the web UI for previews.
+  if (p === "/rest/api/1.0/render" && req.method === "POST") {
+    if (!authorized(req)) return jiraError(res, 401, "Please log in.");
+    const body = await readBody(req);
+    await sleep(LATENCY / 2);
+    const html = renderWiki(body.unrenderedMarkup ?? "") ?? "";
+    res.writeHead(200, { "Content-Type": "text/html;charset=UTF-8" });
+    return res.end(html);
+  }
+
   if (!p.startsWith("/rest/api/2/")) {
     return jiraError(res, 404, `No such resource: ${p}`);
   }
@@ -581,6 +700,40 @@ const server = http.createServer(async (req, res) => {
     if (r === "myself" && req.method === "GET") return json(res, 200, ME);
     if (r === "filter/favourite") return json(res, 200, filters);
     if (r === "project") return json(res, 200, projects);
+    if (r === "priority") return json(res, 200, Object.values(priorities));
+    if (r === "issue/createmeta" && req.method === "GET") {
+      const keys = (url.searchParams.get("projectKeys") ?? "").split(",").filter(Boolean).map((k) => k.toUpperCase());
+      const list = keys.length ? projects.filter((pr) => keys.includes(pr.key)) : projects;
+      const expand = (url.searchParams.get("expand") ?? "").includes("projects.issuetypes.fields");
+      const metas = list.map((pr) => createMetaFor(pr).projects[0]);
+      if (!expand) for (const m of metas) m.issuetypes = m.issuetypes.map(({ fields: _f, ...t }) => t);
+      return json(res, 200, { expand: "projects", projects: metas });
+    }
+    if (r === "issue" && req.method === "POST") {
+      const body = await readBody(req);
+      const f = body.fields ?? {};
+      const proj = projects.find((pr) => pr.key === f.project?.key?.toUpperCase() || pr.id === String(f.project?.id));
+      const type = Object.values(types).find((t) => t.id === String(f.issuetype?.id) || t.name === f.issuetype?.name);
+      const errors = {};
+      if (!proj) errors.project = "project is required";
+      if (!type) errors.issuetype = "issue type is required";
+      if (!f.summary?.trim()) errors.summary = "You must specify a summary of the issue.";
+      if (Object.keys(errors).length) return json(res, 400, { errorMessages: [], errors });
+      const { project: _p, issuetype: _t, summary, reporter: _r, parent, ...rest } = f;
+      const issue = mkIssue({ proj, type, summary, status: statuses.todo, priority: priorities.medium, assignee: null, reporter: ME, description: null, daysAgo: 0, parent: parent?.key ? linkRef(issues.get(parent.key.toUpperCase())) : undefined });
+      issue.fields.created = issue.fields.updated = daysAgoIso(0);
+      issue.fields.duedate = null;
+      issue.fields.fixVersions = [];
+      issue.fields.environment = null;
+      issue.fields.timetracking = {};
+      const fieldErrors = applyFields(issue, rest, { creating: true });
+      if (Object.keys(fieldErrors).length) {
+        issues.delete(issue.key);
+        projectCounters.set(proj.key, projectCounters.get(proj.key) - 1);
+        return json(res, 400, { errorMessages: [], errors: fieldErrors });
+      }
+      return json(res, 201, { id: issue.id, key: issue.key, self: issue.self });
+    }
     if (r === "user/search") {
       const q = (url.searchParams.get("username") ?? "").toLowerCase();
       return json(res, 200, Object.values(users).filter((u) => `${u.name} ${u.displayName} ${u.emailAddress}`.toLowerCase().includes(q)));
@@ -614,6 +767,15 @@ const server = http.createServer(async (req, res) => {
         if (expand.includes("transitions")) out.transitions = transitionsFor(issue);
         return json(res, 200, out);
       }
+      if (sub === "" && req.method === "PUT") {
+        const body = await readBody(req);
+        const errors = applyFields(issue, body.fields);
+        if (Object.keys(errors).length) return json(res, 400, { errorMessages: [], errors });
+        issue.fields.updated = daysAgoIso(0);
+        res.writeHead(204);
+        return res.end();
+      }
+      if (sub === "editmeta" && req.method === "GET") return json(res, 200, { fields: fieldMeta(issue.fields.project) });
       if (sub === "comment" && req.method === "POST") {
         const body = await readBody(req);
         if (!body.body?.trim()) return jiraError(res, 400, "Comment body can not be empty!");

@@ -51,6 +51,7 @@
         {app.total ? `${app.issues.length} / ${app.total}` : app.listLoading ? "" : "0"}
       </span>
       <button class="ghost icon" title="Refresh (r)" onclick={() => app.refreshList()}>↻</button>
+      <button class="ghost icon" title="New issue (n)" onclick={() => app.newIssue()}>＋</button>
     </div>
   </header>
 
