@@ -90,6 +90,8 @@ jobs:
       - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
+          # Artifacts built against one runner image's system libs don't load on another.
+          key: ${{ matrix.os }}-${{ matrix.name }}
       - name: Linux deps
         if: startsWith(matrix.os, 'ubuntu')
         run: |
