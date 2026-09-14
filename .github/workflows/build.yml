@@ -47,12 +47,16 @@ jobs:
         include:
           - os: ubuntu-24.04
             args: ""
+            name: linux
           - os: windows-latest
             args: ""
+            name: windows
           - os: macos-latest
             args: "--target aarch64-apple-darwin"
-          - os: macos-13
+            name: macos-arm64
+          - os: macos-latest
             args: "--target x86_64-apple-darwin"
+            name: macos-x86_64
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -82,7 +86,7 @@ jobs:
           releaseDraft: true
       - uses: actions/upload-artifact@v4
         with:
-          name: jirafast-${{ matrix.os }}
+          name: jirafast-${{ matrix.name }}
           path: |
             src-tauri/target/**/release/bundle/**/*.deb
             src-tauri/target/**/release/bundle/**/*.rpm
