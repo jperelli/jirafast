@@ -59,7 +59,9 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-24.04
+          # Oldest supported runner: the AppImage/.deb/.rpm link against the
+          # build machine's glibc, so this sets the minimum glibc users need (2.35).
+          - os: ubuntu-22.04
             args: ""
             name: linux
           - os: windows-latest
