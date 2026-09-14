@@ -23,6 +23,12 @@ export interface Named {
   description?: string;
 }
 
+/** One hit from `/rest/api/2/issue/picker`, flattened by the backend. */
+export interface IssuePick {
+  key: string;
+  summary: string;
+}
+
 export interface StatusCategory {
   id: number;
   key: "new" | "indeterminate" | "done" | "undefined" | string;

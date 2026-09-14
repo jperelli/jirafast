@@ -592,6 +592,8 @@ function fieldMeta(proj, { forCreate = false, type = null } = {}) {
     customfield_10106: { required: false, schema: { type: "string", custom: `${CF}url`, customId: 10106 }, name: "External Ticket", operations: ["set"] },
     customfield_10107: { required: false, schema: { type: "array", items: "user", custom: `${CF}multiuserpicker`, customId: 10107 }, name: "Stakeholders", operations: ["add", "set", "remove"] },
     customfield_10108: { required: false, schema: { type: "array", items: "json", custom: "com.pyxis.greenhopper.jira:gh-sprint", customId: 10108 }, name: "Sprint", operations: ["set"] },
+    customfield_10109: { required: false, schema: { type: "group", custom: `${CF}grouppicker`, customId: 10109 }, name: "Owning Team", autoCompleteUrl: `${BASE}/rest/api/2/groups/picker?query=`, operations: ["set"] },
+    customfield_10110: { required: false, schema: { type: "any", custom: "com.pyxis.greenhopper.jira:gh-epic-link", customId: 10110 }, name: "Epic Link", operations: ["set"] },
   };
   if (!forCreate) {
     f.reporter = { required: false, schema: { type: "user", system: "reporter" }, name: "Reporter", operations: ["set"] };
@@ -725,6 +727,16 @@ function applyFields(issue, fields, { creating = false } = {}) {
         else issue.fields[name] = picked;
         break;
       }
+      case "customfield_10109":
+        if (value == null) issue.fields[name] = null;
+        else if (typeof value.name === "string") issue.fields[name] = { name: value.name, self: `${BASE}/rest/api/2/group?groupname=${value.name}` };
+        else errors[name] = "Group name expected.";
+        break;
+      case "customfield_10110":
+        if (value == null) issue.fields[name] = null;
+        else if (typeof value === "string" && issues.has(value.toUpperCase())) issue.fields[name] = value.toUpperCase();
+        else errors[name] = `Issue '${value}' does not exist.`;
+        break;
       case "project":
       case "issuetype":
         if (!creating) errors[name] = `Field '${name}' cannot be set. It is not on the appropriate screen, or unknown.`;
@@ -843,6 +855,22 @@ const server = http.createServer(async (req, res) => {
   if (p === "/" || p.startsWith("/browse/")) {
     res.writeHead(200, { "Content-Type": "text/html" });
     return res.end(`<h1>Mock Jira 10.3.2</h1><p>REST at <code>${CTX}/rest/api/2/</code></p>`);
+  }
+
+  // Label suggestions (what Jira's own label picker calls).
+  const lm = p.match(/^\/rest\/api\/1\.0\/labels(?:\/(\d+))?\/suggest$/);
+  if (lm) {
+    if (!authorized(req)) return jiraError(res, 401, "Please log in.");
+    await sleep(LATENCY / 2);
+    const q = (url.searchParams.get("query") ?? "").toLowerCase();
+    const current = lm[1] ? new Set([...issues.values()].find((i) => i.id === lm[1])?.fields.labels ?? []) : new Set();
+    const all = new Set([...issues.values()].flatMap((i) => i.fields.labels));
+    const suggestions = [...all]
+      .filter((l) => !current.has(l) && l.toLowerCase().startsWith(q))
+      .sort()
+      .slice(0, 20)
+      .map((label) => ({ label, html: label }));
+    return json(res, 200, { token: q, suggestions });
   }
 
   // Jira's internal wiki renderer, used by the web UI for previews.
@@ -972,6 +1000,26 @@ const server = http.createServer(async (req, res) => {
     if (r === "user/search") {
       const q = (url.searchParams.get("username") ?? "").toLowerCase();
       return json(res, 200, Object.values(users).filter((u) => `${u.name} ${u.displayName} ${u.emailAddress}`.toLowerCase().includes(q)));
+    }
+    if (r === "groups/picker") {
+      const q = (url.searchParams.get("query") ?? "").toLowerCase();
+      const groups = ["jira-users", "jira-developers", "jira-administrators", "platform-team", "web-team"].filter((g) => g.includes(q)).map((name) => ({ name, html: name, labels: [] }));
+      return json(res, 200, { header: `Showing ${groups.length} of ${groups.length} matching groups`, total: groups.length, groups });
+    }
+    if (r === "issue/picker") {
+      const q = (url.searchParams.get("query") ?? "").toLowerCase();
+      let scope = [...issues.values()];
+      const jql = url.searchParams.get("currentJQL");
+      if (jql) {
+        try {
+          scope = runJql(jql);
+        } catch {
+          scope = [];
+        }
+      }
+      const hits = scope.filter((i) => i.key.toLowerCase().includes(q) || i.fields.summary.toLowerCase().includes(q)).slice(0, 20);
+      const toPick = (i) => ({ id: Number(i.id), key: i.key, keyHtml: i.key, img: i.fields.issuetype.iconUrl, summary: i.fields.summary, summaryText: i.fields.summary });
+      return json(res, 200, { sections: [{ label: "Current Search", sub: `Showing ${hits.length} of ${hits.length} matching issues`, id: "cs", issues: hits.map(toPick) }] });
     }
     if (r === "search") {
       const body = req.method === "POST" ? await readBody(req) : Object.fromEntries(url.searchParams);

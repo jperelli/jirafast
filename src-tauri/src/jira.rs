@@ -449,6 +449,98 @@ impl JiraClient {
         self.get(url).await
     }
 
+    /// Label suggestions, from the same endpoint Jira's own label picker uses
+    /// (`/rest/api/1.0/labels/suggest`, scoped to the issue when given).
+    /// Returns a flat array of label strings.
+    pub async fn label_suggestions(&self, query: &str, issue_id: Option<&str>) -> Result<Value> {
+        let path = match issue_id {
+            Some(id) => format!("labels/{id}/suggest"),
+            None => "labels/suggest".to_string(),
+        };
+        let url = format!(
+            "{}/rest/api/1.0/{path}?query={}",
+            self.base_url,
+            urlencode(query)
+        );
+        let body = self.get(url).await?;
+        let labels = body
+            .get("suggestions")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|s| s.get("label").and_then(Value::as_str))
+                    .map(|l| Value::String(l.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(Value::Array(labels))
+    }
+
+    /// Group names matching `query` (`/rest/api/2/groups/picker`).
+    pub async fn group_picker(&self, query: &str) -> Result<Value> {
+        let url = format!(
+            "{}?query={}&maxResults=20",
+            self.api("groups/picker"),
+            urlencode(query)
+        );
+        let body = self.get(url).await?;
+        let groups = body
+            .get("groups")
+            .and_then(Value::as_array)
+            .map(|arr| {
+                arr.iter()
+                    .filter_map(|g| g.get("name").and_then(Value::as_str))
+                    .map(|n| Value::String(n.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        Ok(Value::Array(groups))
+    }
+
+    /// Issue picker (`/rest/api/2/issue/picker`): key/summary matches for
+    /// `query`, optionally narrowed by `current_jql`. Returns a flat array of
+    /// `{ key, summary }` collected from all sections, de-duplicated.
+    pub async fn issue_picker(&self, query: &str, current_jql: Option<&str>) -> Result<Value> {
+        let mut url = format!(
+            "{}?query={}&showSubTasks=true&showSubTaskParent=true",
+            self.api("issue/picker"),
+            urlencode(query)
+        );
+        if let Some(jql) = current_jql.filter(|j| !j.trim().is_empty()) {
+            url.push_str(&format!("&currentJQL={}", urlencode(jql)));
+        }
+        let body = self.get(url).await?;
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for section in body
+            .get("sections")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            for issue in section
+                .get("issues")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let Some(key) = issue.get("key").and_then(Value::as_str) else {
+                    continue;
+                };
+                if !seen.insert(key.to_string()) {
+                    continue;
+                }
+                let summary = issue
+                    .get("summaryText")
+                    .or_else(|| issue.get("summary"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                out.push(serde_json::json!({ "key": key, "summary": summary }));
+            }
+        }
+        Ok(Value::Array(out))
+    }
+
     /// Fetch a binary asset (attachment, thumbnail, avatar, icon) referenced
     /// from rendered HTML. `path` is host-absolute (`/jira/secure/...`) and may
     /// include a query string.

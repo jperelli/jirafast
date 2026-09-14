@@ -3,10 +3,13 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Editor } from "@tiptap/react";
 import { app, useApp, useBaseUrl, type EditorMode } from "../lib/store";
 import { api, errorMessage, swr } from "../lib/api";
-import type { CreateMeta, CreateMetaIssueType, FieldMetaMap, Issue, IssueFieldsInput, JiraUser, Named } from "../lib/types";
+import type { CreateMeta, CreateMetaIssueType, FieldMetaMap, Issue, IssueFieldsInput, Named } from "../lib/types";
 import { htmlToWiki, renderedToEditorHtml, roundTrips } from "../lib/wiki";
+import { toAssetUrl } from "../lib/html";
 import { genericFields, initialValue, sameValue, toPayload, type FieldValue, type GenericField } from "../lib/fields";
+import { allowedOptions, issueSearcher, labelSearcher, normalizeLabel, rawLabels, searchUsers } from "../lib/pickers";
 import FieldControl from "./FieldControl";
+import Picker from "./Picker";
 import RichEditor from "./RichEditor";
 import css from "./IssueEditor.module.css";
 
@@ -19,7 +22,7 @@ interface Form {
   priorityId: string;
   assignee: string;
   unassign: boolean;
-  labels: string;
+  labels: string[];
   componentIds: string[];
   fixVersionIds: string[];
   duedate: string;
@@ -37,7 +40,7 @@ const EMPTY_FORM: Form = {
   priorityId: "",
   assignee: "",
   unassign: false,
-  labels: "",
+  labels: [],
   componentIds: [],
   fixVersionIds: [],
   duedate: "",
@@ -62,19 +65,8 @@ function ids(list: Named[] | undefined): string[] {
   return (list ?? []).flatMap((v) => (typeof v.id === "string" ? [v.id] : []));
 }
 
-function parseLabels(labels: string): string[] {
-  return labels
-    .split(/[\s,]+/)
-    .map((l) => l.trim())
-    .filter(Boolean);
-}
-
 function sameSet(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((x) => b.includes(x));
-}
-
-function toggleIn(list: string[], id: string): string[] {
-  return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
 }
 
 async function toggleOsFullscreen() {
@@ -102,7 +94,6 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
 
   const [fieldsOpen, setFieldsOpen] = useState(isCreate);
   const [confirmDiscard, setConfirmDiscard] = useState(false);
-  const [userHits, setUserHits] = useState<JiraUser[]>([]);
   const [fontSize, setFontSize] = useState(16);
 
   // Description editing: rich (TipTap) or raw wiki markup. `form.description`
@@ -123,11 +114,24 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
   const issueType = issueTypes.find((t) => t.id === form.issueTypeId) ?? null;
   const fields: FieldMetaMap = isCreate ? (issueType?.fields ?? {}) : (meta ?? {});
   const has = (name: string) => name in fields;
-  const allowed = (name: string): Array<Named & { id: string }> =>
-    (fields[name]?.allowedValues ?? []).filter((v): v is Named & { id: string } => typeof v.id === "string");
   const generic = useMemo(() => genericFields(fields), [fields]);
   const extraValue = (g: GenericField): FieldValue => form.extra[g.id] ?? initialValue(g.kind, g.meta, undefined);
   const setExtra = (id: string, v: FieldValue) => setForm((f) => ({ ...f, extra: { ...f.extra, [id]: v } }));
+
+  const priorityOptions = useMemo(() => allowedOptions(fields.priority?.allowedValues), [fields.priority]);
+  const componentOptions = useMemo(() => allowedOptions(fields.components?.allowedValues), [fields.components]);
+  const versionOptions = useMemo(() => allowedOptions(fields.fixVersions?.allowedValues), [fields.fixVersions]);
+  const projectOptions = useMemo(() => projects.map((p) => ({ id: p.key, label: p.name, hint: p.key })), [projects]);
+  const issueTypeOptions = useMemo(
+    () =>
+      issueTypes.flatMap((t) =>
+        typeof t.id === "string" ? [{ id: t.id, label: t.name, iconUrl: t.iconUrl ? (toAssetUrl(t.iconUrl, baseUrl) ?? t.iconUrl) : undefined }] : [],
+      ),
+    [issueTypes, baseUrl],
+  );
+  const suggestLabels = useMemo(() => labelSearcher(original?.id), [original?.id]);
+  const pickParents = useMemo(() => issueSearcher(form.projectKey ? `project = ${form.projectKey}` : undefined), [form.projectKey]);
+  const assigneeLabel = useMemo(() => rawLabels(original?.fields.assignee), [original]);
 
   const title = isCreate ? "New issue" : (key ?? "");
 
@@ -175,7 +179,7 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
       description: f.description ?? "",
       environment: f.environment ?? "",
       priorityId: f.priority?.id ?? "",
-      labels: (f.labels ?? []).join(" "),
+      labels: f.labels ?? [],
       componentIds: ids(f.components),
       fixVersionIds: ids(f.fixVersions),
       duedate: f.duedate ?? "",
@@ -262,7 +266,7 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
     if (form.description !== (f.description ?? "")) out.description = form.description || null;
     if (has("environment") && form.environment !== (f.environment ?? "")) out.environment = form.environment || null;
     if (has("priority") && form.priorityId && form.priorityId !== (f.priority?.id ?? "")) out.priority = { id: form.priorityId };
-    if (has("labels") && !sameSet(parseLabels(form.labels), f.labels ?? [])) out.labels = parseLabels(form.labels);
+    if (has("labels") && !sameSet(form.labels, f.labels ?? [])) out.labels = form.labels;
     if (has("components") && !sameSet(form.componentIds, ids(f.components))) out.components = form.componentIds.map((id) => ({ id }));
     if (has("fixVersions") && !sameSet(form.fixVersionIds, ids(f.fixVersions))) out.fixVersions = form.fixVersionIds.map((id) => ({ id }));
     if (has("duedate") && form.duedate !== (f.duedate ?? "")) out.duedate = form.duedate || null;
@@ -289,7 +293,7 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
     if (form.description.trim()) out.description = form.description;
     if (has("environment") && form.environment.trim()) out.environment = form.environment;
     if (has("priority") && form.priorityId) out.priority = { id: form.priorityId };
-    if (has("labels") && parseLabels(form.labels).length) out.labels = parseLabels(form.labels);
+    if (has("labels") && form.labels.length) out.labels = form.labels;
     if (has("components") && form.componentIds.length) out.components = form.componentIds.map((id) => ({ id }));
     if (has("fixVersions") && form.fixVersionIds.length) out.fixVersions = form.fixVersionIds.map((id) => ({ id }));
     if (has("duedate") && form.duedate) out.duedate = form.duedate;
@@ -349,28 +353,9 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
     app.closeEditor();
   }
 
-  // ---- users ---------------------------------------------------------------
-  const userTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
-  function onAssigneeInput(value: string) {
-    patch({ assignee: value, unassign: false });
-    clearTimeout(userTimer.current);
-    const q = value.trim();
-    if (q.length < 2) {
-      setUserHits([]);
-      return;
-    }
-    userTimer.current = setTimeout(async () => {
-      try {
-        setUserHits(await api.searchUsers(q));
-      } catch {
-        setUserHits([]);
-      }
-    }, 250);
-  }
-
   // ---- keyboard ------------------------------------------------------------
-  const latest = useRef({ save, cancel, toggleDescMode, confirmDiscard, hasHits: userHits.length > 0, fieldsOpen, description: form.description });
-  latest.current = { save, cancel, toggleDescMode, confirmDiscard, hasHits: userHits.length > 0, fieldsOpen, description: form.description };
+  const latest = useRef({ save, cancel, toggleDescMode, confirmDiscard, fieldsOpen, description: form.description });
+  latest.current = { save, cancel, toggleDescMode, confirmDiscard, fieldsOpen, description: form.description };
 
   useEffect(() => {
     function onKeydown(e: KeyboardEvent) {
@@ -388,9 +373,9 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
         e.preventDefault();
         l.toggleDescMode();
       } else if (e.key === "Escape") {
+        if (e.target instanceof HTMLElement && e.target.closest("[data-picker-open]")) return;
         e.preventDefault();
         if (l.confirmDiscard) setConfirmDiscard(false);
-        else if (l.hasHits) setUserHits([]);
         else if (l.fieldsOpen && !isCreate) setFieldsOpen(false);
         else l.cancel();
       }
@@ -494,122 +479,117 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
               <>
                 {isCreate && (
                   <>
-                    <label>
+                    <div className={css.fld}>
                       <span>Project</span>
-                      <select value={form.projectKey} onChange={(e) => onProjectChange(e.target.value)}>
-                        {projects.map((p) => (
-                          <option key={p.key} value={p.key}>
-                            {p.key} · {p.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
-                    <label>
+                      <Picker
+                        value={form.projectKey ? [form.projectKey] : []}
+                        onChange={(ids) => ids[0] && ids[0] !== form.projectKey && onProjectChange(ids[0])}
+                        options={projectOptions}
+                        placeholder="Search projects…"
+                      />
+                    </div>
+                    <div className={css.fld}>
                       <span>Issue type</span>
-                      <select value={form.issueTypeId} onChange={(e) => patch({ issueTypeId: e.target.value })} disabled={!issueTypes.length}>
-                        {issueTypes.map((t) => (
-                          <option key={t.id} value={t.id}>
-                            {t.name}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                      <Picker
+                        value={form.issueTypeId ? [form.issueTypeId] : []}
+                        onChange={(ids) => ids[0] && patch({ issueTypeId: ids[0] })}
+                        options={issueTypeOptions}
+                        disabled={!issueTypes.length}
+                        placeholder="Search issue types…"
+                      />
+                    </div>
                     {issueType?.subtask && (
-                      <label>
+                      <div className={css.fld}>
                         <span>Parent issue</span>
-                        <input value={form.parentKey} onChange={(e) => patch({ parentKey: e.target.value })} placeholder={`${form.projectKey}-123`} spellCheck={false} />
-                      </label>
+                        <Picker
+                          value={form.parentKey ? [form.parentKey] : []}
+                          onChange={(ids) => patch({ parentKey: ids[0] ?? "" })}
+                          search={pickParents}
+                          allowCustom
+                          normalize={(t) => t.trim().toUpperCase()}
+                          placeholder={`${form.projectKey}-123 or summary…`}
+                        />
+                      </div>
                     )}
                   </>
                 )}
 
-                {has("priority") && (
-                  <label>
+                {has("priority") && priorityOptions.length > 0 && (
+                  <div className={css.fld}>
                     <span>Priority</span>
-                    <select value={form.priorityId} onChange={(e) => patch({ priorityId: e.target.value })}>
-                      {isCreate && <option value="">Default</option>}
-                      {allowed("priority").map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+                    <Picker
+                      value={form.priorityId ? [form.priorityId] : []}
+                      onChange={(ids) => patch({ priorityId: ids[0] ?? "" })}
+                      options={priorityOptions}
+                      placeholder={isCreate ? "Default" : "Search…"}
+                    />
+                  </div>
                 )}
 
                 {has("assignee") && (
-                  <label className={css.assignee}>
+                  <div className={`${css.fld} ${css.assignee}`}>
                     <span>Assignee</span>
                     {!isCreate && original?.fields.assignee && !form.unassign && !form.assignee && (
                       <div className={`muted ${css.current}`}>Currently {original.fields.assignee.displayName}</div>
                     )}
-                    <input
-                      value={form.assignee}
-                      onChange={(e) => onAssigneeInput(e.target.value)}
-                      placeholder={form.unassign ? "Unassigned" : "username"}
-                      spellCheck={false}
-                      autoComplete="off"
+                    <Picker
+                      value={form.assignee ? [form.assignee] : []}
+                      onChange={(ids) => patch({ assignee: ids[0] ?? "", unassign: false })}
+                      search={searchUsers}
+                      minChars={2}
+                      allowCustom
+                      labelFor={assigneeLabel}
+                      placeholder={form.unassign ? "Unassigned" : "Search users…"}
+                      actions={
+                        <>
+                          {me && (
+                            <button type="button" className={`ghost ${css.small}`} onClick={() => patch({ assignee: me.name, unassign: false })}>
+                              Me
+                            </button>
+                          )}
+                          {!isCreate && (
+                            <button
+                              type="button"
+                              className={`ghost ${css.small} ${form.unassign ? css.on : ""}`}
+                              onClick={() => patch({ unassign: !form.unassign, assignee: "" })}
+                            >
+                              Unassign
+                            </button>
+                          )}
+                        </>
+                      }
                     />
-                    {userHits.length > 0 && (
-                      <div className={css.hits}>
-                        {userHits.map((u) => (
-                          <button
-                            key={u.name}
-                            className={`ghost ${css.hit}`}
-                            onClick={() => {
-                              patch({ assignee: u.name });
-                              setUserHits([]);
-                            }}
-                          >
-                            {u.displayName} <span className="muted">({u.name})</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                    <div className={css.row}>
-                      {me && (
-                        <button className={`ghost ${css.small}`} onClick={() => patch({ assignee: me.name, unassign: false })}>
-                          Me
-                        </button>
-                      )}
-                      {!isCreate && (
-                        <button className={`ghost ${css.small} ${form.unassign ? css.on : ""}`} onClick={() => patch({ unassign: !form.unassign, assignee: "" })}>
-                          Unassign
-                        </button>
-                      )}
-                    </div>
-                  </label>
+                  </div>
                 )}
 
                 {has("labels") && (
-                  <label>
+                  <div className={css.fld}>
                     <span>Labels</span>
-                    <input value={form.labels} onChange={(e) => patch({ labels: e.target.value })} placeholder="space separated" spellCheck={false} />
-                  </label>
+                    <Picker
+                      value={form.labels}
+                      onChange={(labels) => patch({ labels })}
+                      multiple
+                      allowCustom
+                      normalize={normalizeLabel}
+                      search={suggestLabels}
+                      minChars={0}
+                      placeholder="Search labels…"
+                    />
+                  </div>
                 )}
 
-                {has("components") && allowed("components").length > 0 && (
-                  <fieldset>
-                    <legend>Components</legend>
-                    {allowed("components").map((c) => (
-                      <label key={c.id} className={css.check}>
-                        <input type="checkbox" checked={form.componentIds.includes(c.id)} onChange={() => patch({ componentIds: toggleIn(form.componentIds, c.id) })} />
-                        {c.name}
-                      </label>
-                    ))}
-                  </fieldset>
+                {has("components") && componentOptions.length > 0 && (
+                  <div className={css.fld}>
+                    <span>Components</span>
+                    <Picker value={form.componentIds} onChange={(componentIds) => patch({ componentIds })} multiple options={componentOptions} placeholder="Search components…" />
+                  </div>
                 )}
 
-                {has("fixVersions") && allowed("fixVersions").length > 0 && (
-                  <fieldset>
-                    <legend>Fix versions</legend>
-                    {allowed("fixVersions").map((v) => (
-                      <label key={v.id} className={css.check}>
-                        <input type="checkbox" checked={form.fixVersionIds.includes(v.id)} onChange={() => patch({ fixVersionIds: toggleIn(form.fixVersionIds, v.id) })} />
-                        {v.name}
-                      </label>
-                    ))}
-                  </fieldset>
+                {has("fixVersions") && versionOptions.length > 0 && (
+                  <div className={css.fld}>
+                    <span>Fix versions</span>
+                    <Picker value={form.fixVersionIds} onChange={(fixVersionIds) => patch({ fixVersionIds })} multiple options={versionOptions} placeholder="Search versions…" />
+                  </div>
                 )}
 
                 {has("duedate") && (
@@ -628,7 +608,17 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
 
                 {generic.length > 0 && <div className={css.divider}></div>}
                 {generic.map((g) => (
-                  <FieldControl key={g.id} field={g} value={extraValue(g)} onChange={(v) => setExtra(g.id, v)} allowEmpty={isCreate} me={me} />
+                  <FieldControl
+                    key={g.id}
+                    field={g}
+                    value={extraValue(g)}
+                    onChange={(v) => setExtra(g.id, v)}
+                    allowEmpty={isCreate}
+                    me={me}
+                    issueId={original?.id}
+                    projectKey={form.projectKey || undefined}
+                    raw={original?.fields[g.id]}
+                  />
                 ))}
               </>
             )}

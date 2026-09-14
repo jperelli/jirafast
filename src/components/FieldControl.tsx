@@ -1,5 +1,8 @@
-import { childOptions, optionLabel, type Cascading, type FieldValue, type GenericField, type TimeTracking } from "../lib/fields";
+import { useMemo } from "react";
+import { childOptions, listValue, type Cascading, type FieldValue, type GenericField, type TimeTracking } from "../lib/fields";
+import { allowedOptions, issueSearcher, labelSearcher, normalizeLabel, rawLabels, searchGroups, searchUsers } from "../lib/pickers";
 import type { JiraUser } from "../lib/types";
+import Picker from "./Picker";
 import css from "./IssueEditor.module.css";
 
 interface Props {
@@ -9,14 +12,16 @@ interface Props {
   /** On create, selects offer an empty "Default" choice. */
   allowEmpty: boolean;
   me: JiraUser | null;
-}
-
-function toggleIn(list: string[], id: string): string[] {
-  return list.includes(id) ? list.filter((x) => x !== id) : [...list, id];
+  /** Issue being edited (scopes label suggestions); absent on create. */
+  issueId?: string;
+  /** Project of the issue, used to scope issue pickers. */
+  projectKey?: string;
+  /** The issue's raw value for this field, for display names of pre-selected users/groups. */
+  raw?: unknown;
 }
 
 /** Form control for any field described by Jira's editmeta, chosen from its schema. */
-export default function FieldControl({ field, value, onChange, allowEmpty, me }: Props) {
+export default function FieldControl({ field, value, onChange, allowEmpty, me, issueId, projectKey, raw }: Props) {
   const { meta, kind } = field;
   const label = (
     <span>
@@ -24,8 +29,14 @@ export default function FieldControl({ field, value, onChange, allowEmpty, me }:
       {meta.required && <span className={css.req}> *</span>}
     </span>
   );
-  const options = meta.allowedValues ?? [];
+  const options = useMemo(() => allowedOptions(meta.allowedValues), [meta.allowedValues]);
+  const suggestLabels = useMemo(() => labelSearcher(issueId), [issueId]);
+  const pickIssues = useMemo(() => issueSearcher(projectKey ? `project = ${projectKey}` : undefined), [projectKey]);
+  const labelFor = useMemo(() => rawLabels(raw), [raw]);
   const str = typeof value === "string" ? value : "";
+  const list = listValue(value);
+  const single = str ? [str] : [];
+  const setSingle = (ids: string[]) => onChange(ids[0] ?? "");
 
   switch (kind) {
     case "text":
@@ -65,91 +76,98 @@ export default function FieldControl({ field, value, onChange, allowEmpty, me }:
       );
     case "select":
       return (
-        <label>
+        <div className={css.fld}>
           {label}
-          <select value={str} onChange={(e) => onChange(e.target.value)}>
-            {(allowEmpty || !meta.required || !str) && <option value="">{allowEmpty ? "Default" : "None"}</option>}
-            {options.map((o) => (
-              <option key={o.id ?? optionLabel(o)} value={o.id ?? optionLabel(o)}>
-                {optionLabel(o)}
-              </option>
-            ))}
-          </select>
-        </label>
+          <Picker value={single} onChange={setSingle} options={options} placeholder={allowEmpty ? "Default" : meta.required ? "Search…" : "None"} />
+        </div>
       );
-    case "multiselect": {
-      const list = Array.isArray(value) ? value : [];
+    case "multiselect":
       return (
-        <fieldset>
-          <legend>
-            {meta.name}
-            {meta.required && <span className={css.req}> *</span>}
-          </legend>
-          {options.map((o) => {
-            const id = o.id ?? optionLabel(o);
-            return (
-              <label key={id} className={css.check}>
-                <input type="checkbox" checked={list.includes(id)} onChange={() => onChange(toggleIn(list, id))} />
-                {optionLabel(o)}
-              </label>
-            );
-          })}
-        </fieldset>
+        <div className={css.fld}>
+          {label}
+          <Picker value={list} onChange={onChange} multiple options={options} placeholder="Search…" />
+        </div>
       );
-    }
     case "strings":
       return (
-        <label>
+        <div className={css.fld}>
           {label}
-          <input value={str} onChange={(e) => onChange(e.target.value)} placeholder="space separated" spellCheck={false} />
-        </label>
+          <Picker value={list} onChange={onChange} multiple allowCustom placeholder="Type and press Enter" />
+        </div>
+      );
+    case "labels":
+      return (
+        <div className={css.fld}>
+          {label}
+          <Picker value={list} onChange={onChange} multiple allowCustom normalize={normalizeLabel} search={suggestLabels} minChars={0} placeholder="Search labels…" />
+        </div>
       );
     case "user":
-    case "users":
+    case "users": {
+      const multi = kind === "users";
+      const me_ = me && (
+        <button
+          type="button"
+          className={`ghost ${css.small}`}
+          onClick={() => (multi ? onChange(list.includes(me.name) ? list : [...list, me.name]) : onChange(me.name))}
+        >
+          Me
+        </button>
+      );
       return (
-        <label>
+        <div className={css.fld}>
           {label}
-          <input
-            value={str}
-            onChange={(e) => onChange(e.target.value)}
-            placeholder={kind === "users" ? "usernames, space separated" : "username"}
-            spellCheck={false}
-            autoComplete="off"
+          <Picker
+            value={multi ? list : single}
+            onChange={multi ? onChange : setSingle}
+            multiple={multi}
+            search={searchUsers}
+            minChars={2}
+            allowCustom
+            placeholder={multi ? "Search users…" : "Search user…"}
+            actions={me_}
+            labelFor={labelFor}
           />
-          {me && (
-            <div className={css.row}>
-              <button className={`ghost ${css.small}`} onClick={() => onChange(kind === "users" ? `${str} ${me.name}`.trim() : me.name)}>
-                Me
-              </button>
-            </div>
-          )}
-        </label>
+        </div>
+      );
+    }
+    case "group":
+    case "groups": {
+      const multi = kind === "groups";
+      return (
+        <div className={css.fld}>
+          {label}
+          <Picker
+            value={multi ? list : single}
+            onChange={multi ? onChange : setSingle}
+            multiple={multi}
+            search={searchGroups}
+            minChars={0}
+            allowCustom
+            placeholder={multi ? "Search groups…" : "Search group…"}
+            labelFor={labelFor}
+          />
+        </div>
+      );
+    }
+    case "issue":
+      return (
+        <div className={css.fld}>
+          {label}
+          <Picker value={single} onChange={setSingle} search={pickIssues} minChars={1} allowCustom placeholder="Key or summary…" />
+        </div>
       );
     case "cascading": {
       const c = (typeof value === "object" && !Array.isArray(value) && "parent" in value ? value : { parent: "", child: "" }) as Cascading;
-      const children = childOptions(meta, c.parent);
+      const children = allowedOptions(childOptions(meta, c.parent));
       return (
-        <label>
+        <div className={css.fld}>
           {label}
-          <select value={c.parent} onChange={(e) => onChange({ parent: e.target.value, child: "" })}>
-            <option value="">None</option>
-            {options.map((o) => (
-              <option key={o.id} value={o.id}>
-                {optionLabel(o)}
-              </option>
-            ))}
-          </select>
+          <Picker value={c.parent ? [c.parent] : []} onChange={(ids) => onChange({ parent: ids[0] ?? "", child: "" })} options={options} placeholder="None" />
           {children.length > 0 && (
-            <select value={c.child} onChange={(e) => onChange({ parent: c.parent, child: e.target.value })}>
-              <option value="">None</option>
-              {children.map((o) => (
-                <option key={o.id} value={o.id}>
-                  {optionLabel(o)}
-                </option>
-              ))}
-            </select>
+            <Picker value={c.child ? [c.child] : []} onChange={(ids) => onChange({ parent: c.parent, child: ids[0] ?? "" })} options={children} placeholder="None" />
           )}
-        </label>
+        </div>
       );
     }
     case "timetracking": {

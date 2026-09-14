@@ -11,6 +11,7 @@ import type {
   Filter,
   Issue,
   IssueFieldsInput,
+  IssuePick,
   JiraUser,
   Project,
   PublicSettings,
@@ -61,6 +62,10 @@ export const api = {
   getBoardIssues: (boardId: number, jql: string, preferCache: boolean) =>
     invoke<Cached<SearchResult> | null>("get_board_issues", { boardId, jql, preferCache }),
   searchUsers: (query: string) => invoke<JiraUser[]>("search_users", { query }),
+  suggestLabels: (query: string, issueId?: string) => invoke<string[]>("suggest_labels", { query, issueId: issueId ?? null }),
+  searchGroups: (query: string) => invoke<string[]>("search_groups", { query }),
+  pickIssues: (query: string, currentJql?: string) =>
+    invoke<IssuePick[]>("pick_issues", { query, currentJql: currentJql ?? null }),
   clearCache: () => invoke<void>("clear_cache"),
 
   onIssueCached: (cb: (key: string) => void): Promise<UnlistenFn> =>

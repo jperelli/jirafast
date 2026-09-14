@@ -91,13 +91,15 @@
   flex-direction: column;
   gap: 12px;
 }
-.fields label {
+.fields label,
+.fields .fld {
   display: flex;
   flex-direction: column;
   gap: 4px;
   font-size: 13px;
 }
-.fields label > span {
+.fields label > span,
+.fields .fld > span {
   color: var(--fg-2);
   font-weight: 600;
   font-size: 12px;
@@ -150,19 +152,6 @@
 }
 .current {
   font-size: 12px;
-}
-.hits {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--border);
-  border-radius: var(--radius);
-  background: var(--bg);
-  max-height: 160px;
-  overflow-y: auto;
-}
-.hit {
-  text-align: left;
-  border-radius: 0;
 }
 
 .zen {

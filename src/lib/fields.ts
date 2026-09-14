@@ -35,8 +35,12 @@ export type FieldKind =
   | "select"
   | "multiselect"
   | "strings"
+  | "labels"
   | "user"
   | "users"
+  | "group"
+  | "groups"
+  | "issue"
   | "cascading"
   | "timetracking"
   | "unsupported";
@@ -53,12 +57,14 @@ export interface TimeTracking {
 export type FieldValue = string | string[] | Cascading | TimeTracking;
 
 const CF = "com.atlassian.jira.plugin.system.customfieldtypes:";
+const GH = "com.pyxis.greenhopper.jira:";
 
 export function kindOf(meta: FieldMeta): FieldKind {
   const s = meta.schema;
   if (!s) return "unsupported";
   const custom = s.custom ?? "";
   const hasOptions = (meta.allowedValues?.length ?? 0) > 0;
+  if (custom === `${GH}gh-epic-link`) return "issue";
   switch (s.type) {
     case "string":
       if (custom === `${CF}textarea`) return "textarea";
@@ -86,15 +92,16 @@ export function kindOf(meta: FieldMeta): FieldKind {
     case "project":
       return hasOptions ? "select" : "unsupported";
     case "group":
-      return "text";
+      return "group";
     case "array":
       switch (s.items) {
         case "string":
-          return hasOptions ? "multiselect" : "strings";
+          if (hasOptions) return "multiselect";
+          return custom === `${CF}labels` || s.system === "labels" ? "labels" : "strings";
         case "user":
           return "users";
         case "group":
-          return "strings";
+          return "groups";
         case "option":
         case "version":
         case "component":
@@ -171,9 +178,12 @@ export function initialValue(kind: FieldKind, meta: FieldMeta, raw: unknown): Fi
     case "multiselect":
       return Array.isArray(raw) ? raw.map((v) => matchOption(v, meta)).filter(Boolean) : [];
     case "strings":
+    case "labels":
     case "users":
-      return Array.isArray(raw) ? raw.map(optionId).filter(Boolean).join(" ") : "";
+    case "groups":
+      return Array.isArray(raw) ? raw.map(optionId).filter(Boolean) : [];
     case "user":
+    case "group":
       return optionId(raw);
     case "cascading": {
       const o = (raw ?? {}) as { child?: unknown };
@@ -207,11 +217,14 @@ export function toPayload(kind: FieldKind, meta: FieldMeta, value: FieldValue): 
     case "multiselect":
       return Array.isArray(value) ? value.map(ref) : [];
     case "strings":
-      return typeof value === "string" ? splitList(value) : [];
+    case "labels":
+      return listValue(value);
     case "user":
+    case "group":
       return typeof value === "string" && value.trim() ? { name: value.trim() } : null;
     case "users":
-      return typeof value === "string" ? splitList(value).map((n) => ({ name: n })) : [];
+    case "groups":
+      return listValue(value).map((n) => ({ name: n }));
     case "cascading": {
       const c = value as Cascading;
       if (!c.parent) return null;
@@ -258,4 +271,10 @@ export function splitList(s: string): string[] {
     .split(/[\s,]+/)
     .map((x) => x.trim())
     .filter(Boolean);
+}
+
+/** Token list of a list-kind field value (arrays as-is, legacy strings split). */
+export function listValue(value: FieldValue): string[] {
+  if (Array.isArray(value)) return value;
+  return typeof value === "string" ? splitList(value) : [];
 }

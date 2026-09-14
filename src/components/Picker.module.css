@@ -1,0 +1,125 @@
+.picker {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.field {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  min-height: 30px;
+  padding: 2px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  cursor: text;
+}
+.field:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.input {
+  flex: 1;
+  min-width: 60px;
+  width: auto !important;
+  border: none !important;
+  box-shadow: none !important;
+  background: transparent;
+  padding: 2px 4px;
+}
+.input:focus {
+  outline: none;
+  box-shadow: none !important;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  max-width: 100%;
+  padding: 1px 4px 1px 8px;
+  border-radius: 3px;
+  background: var(--bg-3);
+  color: var(--fg);
+  font-size: 12px;
+  line-height: 18px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.x {
+  border: none;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 4px;
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  border-radius: 3px;
+}
+.x:hover {
+  color: var(--danger);
+  background: var(--danger-bg);
+}
+.spin {
+  margin-right: 6px;
+}
+.menu {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  margin: 2px 0 0;
+  padding: 2px 0;
+  list-style: none;
+  max-height: 220px;
+  overflow-y: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+  box-shadow: var(--shadow);
+}
+.item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.item.active {
+  background: var(--accent-bg);
+}
+.label {
+  flex: 0 1 auto;
+  min-width: 30%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.hint {
+  flex: 1 1 0;
+  min-width: 0;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: right;
+  padding-left: 8px;
+}
+.icon {
+  width: 16px;
+  height: 16px;
+  flex: none;
+}
+.empty {
+  cursor: default;
+  font-size: 12px;
+}
+.actions {
+  display: flex;
+  gap: 6px;
+}

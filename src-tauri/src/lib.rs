@@ -428,6 +428,35 @@ async fn search_users(state: State<'_, AppState>, query: String) -> Result<Value
 }
 
 #[tauri::command]
+async fn suggest_labels(
+    state: State<'_, AppState>,
+    query: String,
+    issue_id: Option<String>,
+) -> Result<Value> {
+    state
+        .client()?
+        .label_suggestions(&query, issue_id.as_deref())
+        .await
+}
+
+#[tauri::command]
+async fn search_groups(state: State<'_, AppState>, query: String) -> Result<Value> {
+    state.client()?.group_picker(&query).await
+}
+
+#[tauri::command]
+async fn pick_issues(
+    state: State<'_, AppState>,
+    query: String,
+    current_jql: Option<String>,
+) -> Result<Value> {
+    state
+        .client()?
+        .issue_picker(&query, current_jql.as_deref())
+        .await
+}
+
+#[tauri::command]
 async fn clear_cache(state: State<'_, AppState>) -> Result<()> {
     state.cache.clear();
     Ok(())
@@ -548,6 +577,9 @@ pub fn run() {
             get_board_configuration,
             get_board_issues,
             search_users,
+            suggest_labels,
+            search_groups,
+            pick_issues,
             clear_cache,
         ])
         .run(tauri::generate_context!())
