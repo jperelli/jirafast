@@ -9,9 +9,10 @@ export default function IssueList({ searchBox }: { searchBox: RefObject<HTMLInpu
   const baseUrl = useBaseUrl();
   const issues = useApp((s) => s.issues);
   const selectedKey = useApp((s) => s.selectedKey);
-  const { jql, viewName, total, listLoading, listError } = useAppShallow((s) => ({
+  const { jql, viewName, scopeProject, total, listLoading, listError } = useAppShallow((s) => ({
     jql: s.jql,
     viewName: s.viewName,
+    scopeProject: s.scopeProject,
     total: s.total,
     listLoading: s.listLoading,
     listError: s.listError,
@@ -42,13 +43,24 @@ export default function IssueList({ searchBox }: { searchBox: RefObject<HTMLInpu
   return (
     <section className={css.listPane}>
       <header className={css.header}>
-        <form className={css.search} onSubmit={submit}>
+        <form className={`${css.search} ${scopeProject ? css.scoped : ""}`} onSubmit={submit}>
+          {scopeProject && (
+            <button
+              type="button"
+              className={`${css.scope} mono`}
+              title={`Searching only in ${scopeProject} — click to search all projects`}
+              onClick={() => app.clearScope()}
+            >
+              {scopeProject}
+              <span className={css.scopeX}>×</span>
+            </button>
+          )}
           <input
             ref={searchBox}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             type="search"
-            placeholder="Search text, issue key or JQL…  ( / )"
+            placeholder={scopeProject ? `Search in ${scopeProject}…  ( / )` : "Search text, issue key or JQL…  ( / )"}
             spellCheck={false}
           />
         </form>

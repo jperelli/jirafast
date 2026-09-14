@@ -95,7 +95,7 @@ export default function KanbanBoard({ searchBox }: { searchBox: RefObject<HTMLIn
         <button className={`ghost ${css.icon}`} title="Refresh (r)" onClick={() => app.refreshList()}>
           ↻
         </button>
-        <button className={`ghost ${css.icon}`} title="New issue (n)" onClick={() => app.newIssue(board?.location?.projectKey ?? null)}>
+        <button className={`ghost ${css.icon}`} title="New issue (n)" onClick={() => app.newIssue()}>
           ＋
         </button>
       </header>

@@ -1,7 +1,7 @@
 import { create } from "zustand";
 import { useShallow } from "zustand/react/shallow";
 import { api, errorMessage, swr } from "./api";
-import { columnsOf, doneWindowJql, groupByColumn, loadDoneWindow, saveDoneWindow, type DoneWindow } from "./board";
+import { boardProjectKeys, columnsOf, doneWindowJql, groupByColumn, loadDoneWindow, saveDoneWindow, type DoneWindow } from "./board";
 import type { Board, BoardConfig, BoardProjectInfo, Filter, Issue, JiraUser, Project, PublicSettings, SearchResult, SettingsInput } from "./types";
 
 export interface QuickView {
@@ -28,7 +28,10 @@ export type Screen = "loading" | "connect" | "main";
 export type View = "list" | "board";
 
 /** Full-window editor: edit an existing issue or create a new one. */
-export type EditorMode = { kind: "edit"; key: string } | { kind: "create"; projectKey: string | null };
+export type EditorMode =
+  | { kind: "edit"; key: string }
+  /** `board` is the board the issue is created from; its filter pre-fills the form. */
+  | { kind: "create"; projectKey: string | null; board: Board | null };
 
 /** One image shown fullscreen by the lightbox. */
 export interface LightboxItem {
@@ -64,6 +67,8 @@ export interface AppState {
   jql: string;
   viewId: string;
   viewName: string;
+  /** Project key the list view is scoped to; quick searches stay inside it. */
+  scopeProject: string | null;
   issues: Issue[];
   total: number;
   listLoading: boolean;
@@ -100,6 +105,7 @@ const initial: AppState = {
   jql: QUICK_VIEWS[0].jql,
   viewId: QUICK_VIEWS[0].id,
   viewName: QUICK_VIEWS[0].name,
+  scopeProject: null,
   issues: [],
   total: 0,
   listLoading: false,
@@ -137,6 +143,16 @@ export function useBaseUrl(): string {
 
 let toastTimer: ReturnType<typeof setTimeout> | undefined;
 let searchSeq = 0;
+
+/** Restrict `jql` to `projectKey` unless it already talks about projects. */
+export function scopeJql(jql: string, projectKey: string | null): string {
+  if (!projectKey || /\bproject\b/i.test(jql)) return jql;
+  const m = jql.match(/^(.*?)(\s+ORDER\s+BY\s+.*)?$/is);
+  const where = m?.[1].trim() ?? jql.trim();
+  const order = m?.[2] ?? "";
+  return where ? `project = "${projectKey}" AND (${where})${order}` : `project = "${projectKey}"${order}`;
+}
+
 let issueSeq = 0;
 
 function selectedIndex(): number {
@@ -191,8 +207,8 @@ export const app = {
     set({ screen: "main" });
     // Everything below is stale-while-revalidate: cached data shows instantly.
     void app.loadSidebar();
-    const { jql, viewId, viewName } = get();
-    void app.runSearch(jql, viewId, viewName);
+    const { jql, viewId, viewName, scopeProject } = get();
+    void app.runSearch(jql, viewId, viewName, scopeProject);
     api.getMyself().then(
       (me) => set({ me }),
       (e) => app.notify(`Jira unreachable: ${errorMessage(e)}`, "error"),
@@ -254,9 +270,9 @@ export const app = {
     );
   },
 
-  async runSearch(jql: string, viewId = "custom", viewName = "Search") {
+  async runSearch(jql: string, viewId = "custom", viewName = "Search", scopeProject: string | null = null) {
     const seq = ++searchSeq;
-    set({ view: "list", jql, viewId, viewName, listError: null, listLoading: true });
+    set({ view: "list", jql, viewId, viewName, scopeProject, listError: null, listLoading: true });
     let gotAny = false;
     try {
       await swr<SearchResult>(
@@ -367,12 +383,25 @@ export const app = {
   },
 
   refreshList() {
-    const { view, board, jql, viewId, viewName } = get();
+    const { view, board, jql, viewId, viewName, scopeProject } = get();
     if (view === "board" && board) return app.openBoard(board);
-    return app.runSearch(jql, viewId, viewName);
+    return app.runSearch(jql, viewId, viewName, scopeProject);
   },
 
-  /** Quick search box: issue key → open it; JQL-looking → run it; else full text. */
+  /** Open a project's unresolved issues; later quick searches stay inside that project. */
+  openProject(projectKey: string, name: string) {
+    void app.runSearch(`project = "${projectKey}" AND resolution = Unresolved ORDER BY updated DESC`, `project:${projectKey}`, name, projectKey);
+  },
+
+  /** Drop the project scope of the list view (keeps the current results). */
+  clearScope() {
+    set({ scopeProject: null });
+  },
+
+  /**
+   * Quick search box: issue key → open it; JQL-looking → run it; else full
+   * text. Inside a project view the search is restricted to that project.
+   */
   quickSearch(text: string) {
     const t = text.trim();
     if (!t) return;
@@ -381,12 +410,14 @@ export const app = {
       void app.openIssue(km[1].toUpperCase());
       return;
     }
+    const scope = get().view === "list" ? get().scopeProject : null;
+    const suffix = scope ? ` in ${scope}` : "";
     if (JQL_HINT_RE.test(t)) {
-      void app.runSearch(t, "custom", "JQL");
+      void app.runSearch(scopeJql(t, scope), "custom", `JQL${suffix}`, scope);
       return;
     }
     const escaped = t.replace(/(["\\])/g, "\\$1");
-    void app.runSearch(`text ~ "${escaped}" ORDER BY updated DESC`, "custom", `Search: ${t}`);
+    void app.runSearch(scopeJql(`text ~ "${escaped}" ORDER BY updated DESC`, scope), "custom", `Search${suffix}: ${t}`, scope);
   },
 
   async openIssue(key: string, opts: { push?: boolean } = {}) {
@@ -477,8 +508,16 @@ export const app = {
     if (key) set({ editor: { kind: "edit", key } });
   },
 
-  newIssue(projectKey: string | null = get().issue?.fields.project?.key ?? null) {
-    set({ editor: { kind: "create", projectKey } });
+  /**
+   * Open the create form. The project defaults to the current board's, else
+   * the open issue's, else the project the list is scoped to.
+   */
+  newIssue(projectKey: string | null = null) {
+    const s = get();
+    const board = s.view === "board" ? s.board : null;
+    const fromBoard = board ? boardProjectKeys(board, s.projects, s.boardProjects[board.id])[0] : undefined;
+    const pk = projectKey ?? fromBoard ?? s.issue?.fields.project?.key ?? s.scopeProject;
+    set({ editor: { kind: "create", projectKey: pk ?? null, board } });
   },
 
   closeEditor() {

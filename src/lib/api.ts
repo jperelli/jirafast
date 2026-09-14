@@ -59,6 +59,8 @@ export const api = {
     invoke<Cached<BoardProjectInfo> | null>("get_board_projects", { boardId, preferCache }),
   getBoardConfiguration: (boardId: number, preferCache: boolean) =>
     invoke<Cached<BoardConfig> | null>("get_board_configuration", { boardId, preferCache }),
+  getFilter: (filterId: string, preferCache: boolean) =>
+    invoke<Cached<Filter> | null>("get_filter", { filterId, preferCache }),
   getBoardIssues: (boardId: number, jql: string, preferCache: boolean) =>
     invoke<Cached<SearchResult> | null>("get_board_issues", { boardId, jql, preferCache }),
   searchUsers: (query: string) => invoke<JiraUser[]>("search_users", { query }),

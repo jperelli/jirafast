@@ -3,7 +3,8 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Editor } from "@tiptap/react";
 import { app, useApp, useBaseUrl, type EditorMode } from "../lib/store";
 import { api, errorMessage, swr } from "../lib/api";
-import type { CreateMeta, CreateMetaIssueType, FieldMetaMap, Issue, IssueFieldsInput, Named } from "../lib/types";
+import type { Board, CreateMeta, CreateMetaIssueType, FieldMetaMap, Issue, IssueFieldsInput, Named } from "../lib/types";
+import { jqlLabelRefs } from "../lib/board";
 import { htmlToWiki, renderedToEditorHtml, roundTrips } from "../lib/wiki";
 import { toAssetUrl } from "../lib/html";
 import { genericFields, initialValue, sameValue, toPayload, type FieldValue, type GenericField } from "../lib/fields";
@@ -143,7 +144,7 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
       setLoadError(null);
       try {
         if (mode.kind === "edit") await loadEdit(mode.key);
-        else await loadCreate(mode.projectKey);
+        else await loadCreate(mode.projectKey, mode.board);
       } catch (e) {
         if (!cancelled) setLoadError(errorMessage(e));
       } finally {
@@ -189,13 +190,29 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
     await enterRich(f.description ?? "", typeof rendered === "string" ? rendered : null);
   }
 
-  async function loadCreate(preferred: string | null) {
+  async function loadCreate(preferred: string | null, board: Board | null) {
     if (!app.state.projects.length) await app.loadSidebar();
     const pk = preferred ?? app.state.projects[0]?.key ?? "";
     if (!pk) throw new Error("No projects available to create an issue in");
     patch({ projectKey: pk });
     setRichHtml("");
-    await loadCreateMeta(pk);
+    await Promise.all([loadCreateMeta(pk), board ? prefillFromBoard(board) : Promise.resolve()]);
+  }
+
+  /** Labels the board's filter requires, so the new issue shows up on that board. */
+  async function prefillFromBoard(board: Board) {
+    try {
+      const cached = async <T,>(load: (preferCache: boolean) => Promise<{ value: T } | null>) =>
+        ((await load(true)) ?? (await load(false)))?.value;
+      const cur = app.state.boardConfig;
+      const config = cur?.id === board.id ? cur : await cached((pc) => api.getBoardConfiguration(board.id, pc));
+      const filterId = config?.filter?.id;
+      const filter = filterId ? await cached((pc) => api.getFilter(String(filterId), pc)) : null;
+      const labels = jqlLabelRefs([filter?.jql ?? "", config?.subQuery?.query ?? ""].join(" "));
+      if (labels.length) setForm((f) => ({ ...f, labels: [...new Set([...f.labels, ...labels])] }));
+    } catch (e) {
+      app.notify(`Could not read the board filter: ${errorMessage(e)}`, "error");
+    }
   }
 
   async function loadCreateMeta(pk: string) {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { app, QUICK_VIEWS, useApp, useBaseUrl } from "../lib/store";
 import { errorMessage } from "../lib/api";
-import { groupBoards, loadOpenFolders, saveOpenFolders, type ProjectFolder } from "../lib/board";
+import { groupBoards, loadFavorites, loadOpenFolders, saveFavorites, saveOpenFolders, sortFavorites, type Favorites, type ProjectFolder } from "../lib/board";
 import css from "./Sidebar.module.css";
 
 const PROJECT_LIMIT = 12;
@@ -13,20 +13,52 @@ export default function Sidebar() {
   const boards = useApp((s) => s.boards);
   const boardProjects = useApp((s) => s.boardProjects);
   const viewId = useApp((s) => s.viewId);
+  const scopeProject = useApp((s) => s.scopeProject);
   const baseUrl = useBaseUrl();
   const [showAllProjects, setShowAllProjects] = useState(false);
-  const folders = useMemo(() => groupBoards(boards, projects, boardProjects), [boards, projects, boardProjects]);
+  const [fav, setFav] = useState<Favorites>(loadFavorites);
+  const folders = useMemo(
+    () => sortFavorites(groupBoards(boards, projects, boardProjects), fav),
+    [boards, projects, boardProjects, fav],
+  );
   const [openFolders, setOpenFolders] = useState<Set<string>>(loadOpenFolders);
   const activeBoardId = viewId.startsWith("board:") ? Number(viewId.slice(6)) : null;
-  const isActiveFolder = (f: ProjectFolder) => f.boards.some((b) => b.id === activeBoardId) || viewId === `project:${f.key}`;
+  const isActiveFolder = (f: ProjectFolder) => f.boards.some((b) => b.id === activeBoardId) || scopeProject === f.key;
+  const isStarred = (f: ProjectFolder) => fav.projects.includes(f.key) || f.boards.some((b) => fav.boards.includes(b.id));
   const visibleFolders = showAllProjects
     ? folders
-    : folders.filter((f, i) => i < PROJECT_LIMIT || f.boards.length > 0 || isActiveFolder(f));
+    : folders.filter((f, i) => i < PROJECT_LIMIT || f.boards.length > 0 || isActiveFolder(f) || isStarred(f));
 
   useEffect(() => {
-    const folder = folders.find((f) => f.boards.some((b) => b.id === activeBoardId) || viewId === `project:${f.key}`);
+    const folder = folders.find(isActiveFolder);
     if (folder) setOpenFolders((prev) => (prev.has(folder.key) ? prev : new Set(prev).add(folder.key)));
-  }, [activeBoardId, viewId, folders]);
+  }, [activeBoardId, scopeProject, folders]);
+
+  function toggleStar(patch: (f: Favorites) => Favorites) {
+    setFav((prev) => {
+      const next = patch(prev);
+      saveFavorites(next);
+      return next;
+    });
+  }
+  const starProject = (key: string) =>
+    toggleStar((f) => ({ ...f, projects: f.projects.includes(key) ? f.projects.filter((k) => k !== key) : [...f.projects, key] }));
+  const starBoard = (id: number) =>
+    toggleStar((f) => ({ ...f, boards: f.boards.includes(id) ? f.boards.filter((b) => b !== id) : [...f.boards, id] }));
+
+  const star = (on: boolean, what: string, onClick: () => void) => (
+    <button
+      className={`${css.star} ${on ? css.starOn : ""}`}
+      title={on ? `Unstar ${what}` : `Star ${what} (pin to top)`}
+      aria-pressed={on}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+    >
+      {on ? "\u2605" : "\u2606"}
+    </button>
+  );
 
   function toggleFolder(key: string) {
     setOpenFolders((prev) => {
@@ -97,24 +129,25 @@ export default function Sidebar() {
             const p = folder.project;
             return (
               <div key={folder.key} className={css.folder}>
-                <button
-                  className={`${css.item} ${css.folderHead} ${isActiveFolder(folder) ? css.folderActive : ""}`}
-                  aria-expanded={open}
-                  title={p ? `${p.name} (${p.key})` : folder.name}
-                  onClick={() => toggleFolder(folder.key)}
-                >
-                  <span className={`${css.chevron} ${open ? css.chevronOpen : ""}`}>▸</span>
-                  {p && <span className={`${css.pkey} mono`}>{p.key}</span>}
-                  <span className={css.pname}>{folder.name}</span>
-                  {folder.boards.length > 0 && <span className={`${css.count} muted`}>{folder.boards.length}</span>}
-                </button>
+                <div className={css.row}>
+                  <button
+                    className={`${css.item} ${css.folderHead} ${isActiveFolder(folder) ? css.folderActive : ""}`}
+                    aria-expanded={open}
+                    title={p ? `${p.name} (${p.key})` : folder.name}
+                    onClick={() => toggleFolder(folder.key)}
+                  >
+                    <span className={`${css.chevron} ${open ? css.chevronOpen : ""}`}>▸</span>
+                    {p && <span className={`${css.pkey} mono`}>{p.key}</span>}
+                    <span className={css.pname}>{folder.name}</span>
+                    {folder.boards.length > 0 && <span className={`${css.count} muted`}>{folder.boards.length}</span>}
+                  </button>
+                  {p && star(fav.projects.includes(p.key), p.key, () => starProject(p.key))}
+                </div>
                 {open && p && (
                   <button
                     className={`${item(viewId === `project:${p.key}`)} ${css.nested}`}
                     title={`Unresolved issues in ${p.name}`}
-                    onClick={() =>
-                      pickView(`project:${p.key}`, p.name, `project = "${p.key}" AND resolution = Unresolved ORDER BY updated DESC`)
-                    }
+                    onClick={() => app.openProject(p.key, p.name)}
                   >
                     <span className={`${css.pkey} ${css.btype}`}>issues</span>
                     <span className={css.pname}>Open issues</span>
@@ -122,15 +155,17 @@ export default function Sidebar() {
                 )}
                 {open &&
                   folder.boards.map((b) => (
-                    <button
-                      key={b.id}
-                      className={`${item(b.id === activeBoardId)} ${css.nested}`}
-                      title={b.location?.displayName ?? b.name}
-                      onClick={() => app.openBoard(b)}
-                    >
-                      <span className={`${css.pkey} ${css.btype}`}>{b.type === "scrum" ? "scrum" : "kanban"}</span>
-                      <span className={css.pname}>{b.name}</span>
-                    </button>
+                    <div key={b.id} className={css.row}>
+                      <button
+                        className={`${item(b.id === activeBoardId)} ${css.nested}`}
+                        title={b.location?.displayName ?? b.name}
+                        onClick={() => app.openBoard(b)}
+                      >
+                        <span className={`${css.pkey} ${css.btype}`}>{b.type === "scrum" ? "scrum" : "kanban"}</span>
+                        <span className={css.pname}>{b.name}</span>
+                      </button>
+                      {star(fav.boards.includes(b.id), b.name, () => starBoard(b.id))}
+                    </div>
                   ))}
               </div>
             );

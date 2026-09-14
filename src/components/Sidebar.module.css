@@ -73,6 +73,36 @@
 .nested {
   padding-left: 26px;
 }
+.row {
+  display: flex;
+  align-items: center;
+}
+.row > .item {
+  flex: 1;
+  min-width: 0;
+}
+.star {
+  flex: none;
+  background: none;
+  padding: 2px 6px;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--muted);
+  opacity: 0;
+  border-radius: var(--radius);
+}
+.row:hover .star,
+.star:focus-visible,
+.starOn {
+  opacity: 1;
+}
+.starOn {
+  color: #f5a623;
+}
+.star:hover {
+  background: var(--bg-3);
+  color: var(--fg);
+}
 .item.active {
   background: var(--accent-bg);
   color: var(--accent);

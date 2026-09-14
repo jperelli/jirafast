@@ -105,8 +105,21 @@ export const OTHER_FOLDER = "__other";
  * Negated clauses (`!=`, `not in`) are ignored.
  */
 export function jqlProjectRefs(jql: string): string[] {
+  return jqlFieldRefs(jql, "project");
+}
+
+/**
+ * Labels an issue must carry to satisfy the JQL's positive `labels` clauses
+ * (`labels = x`, `labels in (a, b)`), e.g. to pre-fill a new issue so it lands
+ * on the board that uses this filter.
+ */
+export function jqlLabelRefs(jql: string): string[] {
+  return [...new Set(jqlFieldRefs(jql, "labels"))];
+}
+
+function jqlFieldRefs(jql: string, field: string): string[] {
   const refs: string[] = [];
-  const re = /\bproject\s*(?:=|in)\s*(\(([^)]*)\)|"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|([\w-]+))/gi;
+  const re = new RegExp(`\\b${field}\\s*(?:=|in)\\s*(\\(([^)]*)\\)|"((?:[^"\\\\]|\\\\.)*)"|'((?:[^'\\\\]|\\\\.)*)'|([\\w-]+))`, "gi");
   for (const m of jql.matchAll(re)) {
     if (m[2] !== undefined) {
       for (const part of m[2].split(",")) {
@@ -134,7 +147,7 @@ function matchProjects(refs: Iterable<string>, projects: Project[]): string[] {
  * `board/{id}/project` returned, else the configuration's location, else the
  * projects named by its filter's JQL.
  */
-function projectKeysOf(board: Board, projects: Project[], info: BoardProjectInfo | undefined): string[] {
+export function boardProjectKeys(board: Board, projects: Project[], info: BoardProjectInfo | undefined): string[] {
   if (board.location?.projectKey) return [board.location.projectKey];
   if (!info) return [];
   const fromApi = matchProjects(
@@ -159,13 +172,54 @@ export function groupBoards(boards: Board[], projects: Project[], boardProjects:
   const folders = new Map<string, ProjectFolder>(projects.map((p) => [p.key, { key: p.key, name: p.name, project: p, boards: [] }]));
   const other: ProjectFolder = { key: OTHER_FOLDER, name: "Other boards", project: null, boards: [] };
   for (const b of boards) {
-    const keys = projectKeysOf(b, projects, boardProjects[b.id]).filter((k) => folders.has(k));
+    const keys = boardProjectKeys(b, projects, boardProjects[b.id]).filter((k) => folders.has(k));
     if (!keys.length) other.boards.push(b);
     for (const k of keys) folders.get(k)?.boards.push(b);
   }
   const out = [...folders.values()];
   if (other.boards.length) out.push(other);
   return out;
+}
+
+/** Starred projects (keys) and boards (ids); both are pinned to the top of the sidebar. */
+export interface Favorites {
+  projects: string[];
+  boards: number[];
+}
+
+const FAVORITES_KEY = "jirafast:favorites";
+
+export function loadFavorites(): Favorites {
+  try {
+    const raw: unknown = JSON.parse(localStorage.getItem(FAVORITES_KEY) ?? "{}");
+    const o = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+    return {
+      projects: Array.isArray(o.projects) ? o.projects.filter((x): x is string => typeof x === "string") : [],
+      boards: Array.isArray(o.boards) ? o.boards.filter((x): x is number => typeof x === "number") : [],
+    };
+  } catch {
+    return { projects: [], boards: [] };
+  }
+}
+
+export function saveFavorites(fav: Favorites) {
+  try {
+    localStorage.setItem(FAVORITES_KEY, JSON.stringify(fav));
+  } catch {
+    // Private mode / quota: the choice simply won't persist.
+  }
+}
+
+/**
+ * Sidebar order: starred projects first, then projects holding a starred
+ * board, then the rest in Jira's order; starred boards first inside a folder.
+ */
+export function sortFavorites(folders: ProjectFolder[], fav: Favorites): ProjectFolder[] {
+  const starredBoard = (b: Board) => fav.boards.includes(b.id);
+  const rank = (f: ProjectFolder) => (fav.projects.includes(f.key) ? 0 : f.boards.some(starredBoard) ? 1 : 2);
+  return folders
+    .map((f) => ({ ...f, boards: [...f.boards.filter(starredBoard), ...f.boards.filter((b) => !starredBoard(b))] }))
+    .sort((a, b) => rank(a) - rank(b));
 }
 
 const OPEN_FOLDERS_KEY = "jirafast:openBoardFolders";

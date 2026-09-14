@@ -231,15 +231,83 @@ impl JiraClient {
         self.get(self.api(&format!("issue/{}/editmeta", key))).await
     }
 
-    /// Issue types and their fields for one project. Server/DC still serves
-    /// the classic `createmeta` endpoint with the `expand` parameter.
+    /// Issue types and their fields for one project, in the classic
+    /// `createmeta` shape `{ projects: [{ key, issuetypes: [{ ..., fields }] }] }`.
+    ///
+    /// Jira 9+/10 removed `issue/createmeta?projectKeys=` (it now 404s as
+    /// "Issue Does Not Exist"), so the paged per-project resources are used
+    /// first and the classic one only as a fallback for older servers.
     pub async fn create_meta(&self, project_key: &str) -> Result<Value> {
-        let url = format!(
-            "{}?projectKeys={}&expand=projects.issuetypes.fields",
-            self.api("issue/createmeta"),
+        match self.create_meta_paged(project_key).await {
+            Ok(v) => Ok(v),
+            Err(JiraError::Http { status: 404, .. }) => {
+                let url = format!(
+                    "{}?projectKeys={}&expand=projects.issuetypes.fields",
+                    self.api("issue/createmeta"),
+                    urlencode(project_key)
+                );
+                self.get(url).await
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    async fn create_meta_paged(&self, project_key: &str) -> Result<Value> {
+        let base = self.api(&format!(
+            "issue/createmeta/{}/issuetypes",
             urlencode(project_key)
-        );
-        self.get(url).await
+        ));
+        let mut issuetypes = self.paged_values(&base).await?;
+        for t in issuetypes.iter_mut() {
+            let Some(id) = t.get("id").and_then(Value::as_str).map(str::to_owned) else {
+                continue;
+            };
+            let mut fields = serde_json::Map::new();
+            for mut f in self.paged_values(&format!("{}/{}", base, id)).await? {
+                let Some(fid) = f.get("fieldId").and_then(Value::as_str).map(str::to_owned) else {
+                    continue;
+                };
+                if let Some(o) = f.as_object_mut() {
+                    o.remove("fieldId");
+                }
+                fields.insert(fid, f);
+            }
+            if let Some(o) = t.as_object_mut() {
+                o.insert("fields".into(), Value::Object(fields));
+            }
+        }
+        Ok(serde_json::json!({
+            "projects": [{ "key": project_key, "issuetypes": issuetypes }]
+        }))
+    }
+
+    /// Collect every `values` entry of a paged resource (`startAt`/`isLast`).
+    async fn paged_values(&self, url: &str) -> Result<Vec<Value>> {
+        const PAGE: usize = 200;
+        let mut out = Vec::new();
+        let mut start = 0usize;
+        loop {
+            let page = self
+                .get(format!("{}?startAt={}&maxResults={}", url, start, PAGE))
+                .await?;
+            let values = page
+                .get("values")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            let n = values.len();
+            out.extend(values);
+            let is_last = page.get("isLast").and_then(Value::as_bool).unwrap_or(false);
+            let total = page
+                .get("total")
+                .and_then(Value::as_u64)
+                .map(|t| t as usize);
+            start += n;
+            if n == 0 || is_last || total.is_some_and(|t| start >= t) {
+                break;
+            }
+        }
+        Ok(out)
     }
 
     /// Render wiki markup to HTML the same way Jira does for `renderedFields`.
@@ -358,7 +426,7 @@ impl JiraClient {
                         .or_else(|| id.as_u64().map(|n| n.to_string()))
                 });
             if let Some(id) = filter_id {
-                if let Ok(filter) = self.get(self.api(&format!("filter/{id}"))).await {
+                if let Ok(filter) = self.filter(&id).await {
                     jql = filter.get("jql").cloned().unwrap_or(Value::Null);
                 }
             }
@@ -389,6 +457,12 @@ impl JiraClient {
             start_at += n;
         }
         Ok(all)
+    }
+
+    /// A saved filter (`/rest/api/2/filter/{id}`), notably its `jql`.
+    pub async fn filter(&self, filter_id: &str) -> Result<Value> {
+        self.get(self.api(&format!("filter/{}", urlencode(filter_id))))
+            .await
     }
 
     /// Board configuration: columns with their mapped statuses, filter, etc.

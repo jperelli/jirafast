@@ -455,6 +455,11 @@ const boards = [
     unassociated: true,
     jql: "project = PLAT AND issuetype = Bug ORDER BY Rank ASC",
   }),
+  // A board whose filter selects issues by label; new issues created from it
+  // must carry one of these labels to show up.
+  mkBoard(5, "Performance work", "kanban", projects[0], [["To Do", [statuses.todo]], ["Doing", [statuses.progress, statuses.review]], ["Done", [statuses.done]]], {
+    jql: "project = PLAT AND labels in (performance, desktop) ORDER BY Rank ASC",
+  }),
 ];
 
 function mkBoard(id, name, type, proj, columns, opts = {}) {
@@ -510,7 +515,8 @@ function runJql(jql) {
   if (/reporter\s*=\s*currentuser\(\)/.test(lower)) list = list.filter((i) => i.fields.reporter?.name === ME.name);
   if (/watcher\s*=\s*currentuser\(\)/.test(lower)) list = list.filter((i) => i.fields.watches.isWatching);
   if (/resolution\s*=\s*unresolved/.test(lower)) list = list.filter((i) => !i.fields.resolution);
-  const st = m(/status\s*=\s*['"]?([a-z ]+?)['"]?(?:\s|$|and|order)/);
+  const stm = lower.match(/status\s*=\s*(?:"([^"]+)"|'([^']+)'|([a-z]+))/);
+  const st = stm?.[1] ?? stm?.[2] ?? stm?.[3];
   if (st) list = list.filter((i) => i.fields.status.name.toLowerCase() === st.trim());
   // The kanban done-column window jirafast sends:
   //   status not in (<ids>) OR resolutiondate >= -Nd OR (resolution is EMPTY AND updated >= -Nd)
@@ -522,6 +528,11 @@ function runJql(jql) {
   }
   const type = m(/(?:type|issuetype)\s*=\s*['"]?([a-z-]+)['"]?/);
   if (type) list = list.filter((i) => i.fields.issuetype.name.toLowerCase() === type);
+  const lbl = lower.match(/labels\s*(?:=\s*['"]?([\w-]+)['"]?|in\s*\(([^)]*)\))/);
+  if (lbl) {
+    const wanted = lbl[1] ? [lbl[1]] : lbl[2].split(",").map((s) => s.trim().replace(/^['"]|['"]$/g, ""));
+    list = list.filter((i) => i.fields.labels.some((l) => wanted.includes(l.toLowerCase())));
+  }
   const text = q.match(/text\s*~\s*"((?:[^"\\]|\\.)*)"/i)?.[1];
   if (text) {
     const t = text.replace(/\\"/g, '"').toLowerCase();
@@ -605,23 +616,6 @@ function fieldMeta(proj, { forCreate = false, type = null } = {}) {
     if (type?.subtask) f.parent = { required: true, schema: { type: "issuelink", system: "parent" }, name: "Parent", operations: ["set"] };
   }
   return f;
-}
-
-function createMetaFor(proj) {
-  return {
-    expand: "projects",
-    projects: [
-      {
-        expand: "issuetypes",
-        self: proj.self,
-        id: proj.id,
-        key: proj.key,
-        name: proj.name,
-        avatarUrls: proj.avatarUrls,
-        issuetypes: Object.values(types).map((t) => ({ ...t, expand: "fields", fields: fieldMeta(proj, { forCreate: true, type: t }) })),
-      },
-    ],
-  };
 }
 
 // Applies a REST `fields` object (as sent by PUT/POST issue) to an issue.
@@ -964,13 +958,24 @@ const server = http.createServer(async (req, res) => {
     }
     if (r === "project") return json(res, 200, projects);
     if (r === "priority") return json(res, 200, Object.values(priorities));
-    if (r === "issue/createmeta" && req.method === "GET") {
-      const keys = (url.searchParams.get("projectKeys") ?? "").split(",").filter(Boolean).map((k) => k.toUpperCase());
-      const list = keys.length ? projects.filter((pr) => keys.includes(pr.key)) : projects;
-      const expand = (url.searchParams.get("expand") ?? "").includes("projects.issuetypes.fields");
-      const metas = list.map((pr) => createMetaFor(pr).projects[0]);
-      if (!expand) for (const m of metas) m.issuetypes = m.issuetypes.map(({ fields: _f, ...t }) => t);
-      return json(res, 200, { expand: "projects", projects: metas });
+    // Jira 9+/10 removed the classic `issue/createmeta?projectKeys=` resource:
+    // "createmeta" gets parsed as an issue key, so it 404s like a missing issue.
+    if (r === "issue/createmeta" && req.method === "GET") return jiraError(res, 404, "Issue Does Not Exist");
+    const cm = r.match(/^issue\/createmeta\/([^/]+)\/issuetypes(?:\/(\d+))?$/);
+    if (cm && req.method === "GET") {
+      const proj = projects.find((pr) => pr.key === cm[1].toUpperCase() || pr.id === cm[1]);
+      if (!proj) return jiraError(res, 404, `No project could be found with key '${cm[1]}'.`);
+      const page = (values) => {
+        const startAt = Number(url.searchParams.get("startAt") ?? 0);
+        const maxResults = Math.min(Number(url.searchParams.get("maxResults") ?? 50), 200);
+        const slice = values.slice(startAt, startAt + maxResults);
+        return { maxResults, startAt, total: values.length, isLast: startAt + slice.length >= values.length, values: slice };
+      };
+      if (!cm[2]) return json(res, 200, page(Object.values(types)));
+      const type = Object.values(types).find((t) => t.id === cm[2]);
+      if (!type) return jiraError(res, 404, `Issue type with id '${cm[2]}' does not exist for project '${proj.key}'.`);
+      const fields = Object.entries(fieldMeta(proj, { forCreate: true, type })).map(([fieldId, m]) => ({ fieldId, hasDefaultValue: false, ...m }));
+      return json(res, 200, page(fields));
     }
     if (r === "issue" && req.method === "POST") {
       const body = await readBody(req);

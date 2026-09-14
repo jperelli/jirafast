@@ -406,6 +406,20 @@ async fn get_board_configuration(
 }
 
 #[tauri::command]
+async fn get_filter(
+    state: State<'_, AppState>,
+    filter_id: String,
+    prefer_cache: bool,
+) -> Result<Option<CachedResponse>> {
+    let client = state.client()?;
+    let key = format!("filter:{}", filter_id.trim());
+    cached_or_fetch(&state, &key, prefer_cache, async {
+        client.filter(filter_id.trim()).await
+    })
+    .await
+}
+
+#[tauri::command]
 async fn get_board_issues(
     state: State<'_, AppState>,
     board_id: u64,
@@ -575,6 +589,7 @@ pub fn run() {
             get_boards,
             get_board_projects,
             get_board_configuration,
+            get_filter,
             get_board_issues,
             search_users,
             suggest_labels,
