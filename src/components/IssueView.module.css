@@ -168,6 +168,26 @@
 .h2 .count {
   font-weight: 400;
 }
+.copyGroup {
+  display: inline-flex;
+  text-transform: none;
+  letter-spacing: normal;
+  font-weight: 400;
+}
+.copyGroup button {
+  border: 1px solid var(--border);
+  border-radius: 0;
+  margin: 0;
+}
+.copyGroup button + button {
+  border-left: none;
+}
+.copyGroup button:first-child {
+  border-radius: 6px 0 0 6px;
+}
+.copyGroup button:last-child {
+  border-radius: 0 6px 6px 0;
+}
 .error {
   background: var(--danger-bg);
   color: var(--danger);

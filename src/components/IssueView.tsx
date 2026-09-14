@@ -5,6 +5,8 @@ import { app, useApp, useAppShallow, useBaseUrl } from "../lib/store";
 import { api, errorMessage } from "../lib/api";
 import { absoluteTime, formatBytes, relativeTime } from "../lib/format";
 import { toAssetUrl, toJiraUrl } from "../lib/html";
+import { renderedHtmlForClipboard, renderedHtmlToMarkdown } from "../lib/markdown";
+import { writeClipboardHtml, writeClipboardText } from "../lib/clipboard";
 import type { Attachment, Comment, LinkedIssue, Transition } from "../lib/types";
 import Avatar from "./Avatar";
 import JiraHtml from "./JiraHtml";
@@ -38,6 +40,31 @@ export default function IssueView() {
   const rendered = issue?.renderedFields;
 
   const [newestFirst, setNewestFirst] = useState(false);
+  const [copying, setCopying] = useState<"html" | "wiki" | "md" | null>(null);
+
+  async function copyDescription(kind: "html" | "wiki" | "md") {
+    if (!f || copying) return;
+    setCopying(kind);
+    try {
+      const wiki = f.description ?? "";
+      const html = rendered?.description ?? escapePlain(wiki);
+      if (kind === "wiki") {
+        await writeClipboardText(wiki);
+        app.notify("Copied as Jira markup");
+      } else if (kind === "md") {
+        await writeClipboardText(renderedHtmlToMarkdown(html, baseUrl));
+        app.notify("Copied as Markdown");
+      } else {
+        // Plain-text alternative for targets that don't accept HTML.
+        await writeClipboardHtml(renderedHtmlForClipboard(html, baseUrl), renderedHtmlToMarkdown(html, baseUrl) || wiki);
+        app.notify("Copied with formatting");
+      }
+    } catch (e) {
+      app.notify(`Copy failed: ${errorMessage(e)}`, "error");
+    } finally {
+      setCopying(null);
+    }
+  }
   const [transitioning, setTransitioning] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
 
@@ -350,7 +377,25 @@ export default function IssueView() {
                   </div>
                 </div>
 
-                <h2 className={css.h2}>Description</h2>
+                <h2 className={css.h2}>
+                  Description
+                  {(rendered?.description || f.description) && (
+                    <>
+                      <span className={css.grow}></span>
+                      <span className={css.copyGroup} role="group" aria-label="Copy description">
+                        <button className={`ghost ${css.small}`} onClick={() => void copyDescription("html")} disabled={copying !== null} title="Copy with formatting (rich text)">
+                          {copying === "html" ? <span className="spin"></span> : "⎘"} Copy
+                        </button>
+                        <button className={`ghost ${css.small}`} onClick={() => void copyDescription("wiki")} disabled={copying !== null} title="Copy as raw Jira wiki markup">
+                          {copying === "wiki" && <span className="spin"></span>} Jira markup
+                        </button>
+                        <button className={`ghost ${css.small}`} onClick={() => void copyDescription("md")} disabled={copying !== null} title="Copy as Markdown">
+                          {copying === "md" && <span className="spin"></span>} Markdown
+                        </button>
+                      </span>
+                    </>
+                  )}
+                </h2>
                 {rendered?.description || f.description ? (
                   <JiraHtml html={rendered?.description ?? escapePlain(f.description ?? "")} className="description" />
                 ) : (

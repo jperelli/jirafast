@@ -48,7 +48,12 @@ description and comments should get the whole screen.
   cascading select, user and multi-user pickers, URLs…). Only fields you
   changed are sent on save.
 - **New issue (`n` or `＋`)** uses the same editor with project, issue type and
-  parent (for sub-tasks) from `createmeta`.
+  parent (for sub-tasks) from `createmeta`. The summary and description are
+  editable immediately; the fields sidebar loads on its own.
+- **Paste from Markdown** converts the clipboard's Markdown (headings, lists,
+  links, images, code fences, tables, quotes…) to Jira markup at the cursor.
+- The description view has a 3-way **Copy** control: with formatting (rich
+  text), as raw Jira wiki markup, or converted to Markdown.
 - The description is edited as **rich text** (TipTap: headings, lists, links,
   code blocks, tables, quotes, images) and converted back to the Jira wiki
   markup that Jira Server stores. Markup the editor cannot represent (colors,

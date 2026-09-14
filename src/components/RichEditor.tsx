@@ -1,4 +1,4 @@
-import { useEffect, type CSSProperties } from "react";
+import { useEffect, type CSSProperties, type RefObject } from "react";
 import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
@@ -37,13 +37,15 @@ export interface RichEditorProps {
   contentKey: string | number;
   onChange: (editor: Editor) => void;
   onReady?: (editor: Editor) => void;
+  /** Always points at the live editor instance (or null while unmounted). */
+  editorRef?: RefObject<Editor | null>;
   onImageClick?: (src: string, alt: string) => void;
   fontSize: number;
   disabled?: boolean;
   autoFocus?: boolean;
 }
 
-export default function RichEditor({ html, contentKey, onChange, onReady, onImageClick, fontSize, disabled, autoFocus }: RichEditorProps) {
+export default function RichEditor({ html, contentKey, onChange, onReady, editorRef, onImageClick, fontSize, disabled, autoFocus }: RichEditorProps) {
   const editor = useEditor(
     {
       extensions,
@@ -72,6 +74,14 @@ export default function RichEditor({ html, contentKey, onChange, onReady, onImag
   useEffect(() => {
     if (editor && editor.isEditable === Boolean(disabled)) editor.setEditable(!disabled, false);
   }, [editor, disabled]);
+
+  useEffect(() => {
+    if (!editorRef) return;
+    editorRef.current = editor;
+    return () => {
+      editorRef.current = null;
+    };
+  }, [editor, editorRef]);
 
   return (
     <div className={css.wrap} style={{ "--editor-font-size": `${fontSize}px` } as CSSProperties}>

@@ -6,6 +6,8 @@ import { api, errorMessage, swr } from "../lib/api";
 import type { Board, CreateMeta, CreateMetaIssueType, FieldMetaMap, Issue, IssueFieldsInput, Named } from "../lib/types";
 import { jqlLabelRefs } from "../lib/board";
 import { htmlToWiki, renderedToEditorHtml, roundTrips } from "../lib/wiki";
+import { looksLikeMarkdown, markdownToHtml, markdownToWiki } from "../lib/markdown";
+import { readClipboardText } from "../lib/clipboard";
 import { toAssetUrl } from "../lib/html";
 import { genericFields, initialValue, sameValue, toPayload, type FieldValue, type GenericField } from "../lib/fields";
 import { allowedOptions, issueSearcher, labelSearcher, normalizeLabel, rawLabels, searchUsers } from "../lib/pickers";
@@ -88,7 +90,10 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
   const [original, setOriginal] = useState<Issue | null>(null);
   const [meta, setMeta] = useState<FieldMetaMap | null>(null);
   const [createMeta, setCreateMeta] = useState<CreateMeta | null>(null);
-  const [loading, setLoading] = useState(true);
+  // `loading` gates the summary/description pane (edit mode only: the create
+  // form is usable immediately); `metaLoading` gates the fields sidebar.
+  const [loading, setLoading] = useState(!isCreate);
+  const [metaLoading, setMetaLoading] = useState(isCreate);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -100,11 +105,13 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
   // Description editing: rich (TipTap) or raw wiki markup. `form.description`
   // is always the markup; rich edits are converted on every change.
   const [descMode, setDescMode] = useState<DescMode>("rich");
-  const [richHtml, setRichHtml] = useState<string | null>(null);
+  const [richHtml, setRichHtml] = useState<string | null>(isCreate ? "" : null);
   const [richKey, setRichKey] = useState(0);
   const [richBusy, setRichBusy] = useState(false);
   const [lossy, setLossy] = useState(false);
   const richSource = useRef("");
+  const richEditor = useRef<Editor | null>(null);
+  const [pasting, setPasting] = useState(false);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const summaryInput = useRef<HTMLInputElement>(null);
 
@@ -140,7 +147,6 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      setLoading(true);
       setLoadError(null);
       try {
         if (mode.kind === "edit") await loadEdit(mode.key);
@@ -148,7 +154,10 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
       } catch (e) {
         if (!cancelled) setLoadError(errorMessage(e));
       } finally {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          setMetaLoading(false);
+        }
       }
     })();
     return () => {
@@ -195,7 +204,6 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
     const pk = preferred ?? app.state.projects[0]?.key ?? "";
     if (!pk) throw new Error("No projects available to create an issue in");
     patch({ projectKey: pk });
-    setRichHtml("");
     await Promise.all([loadCreateMeta(pk), board ? prefillFromBoard(board) : Promise.resolve()]);
   }
 
@@ -217,23 +225,30 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
 
   async function loadCreateMeta(pk: string) {
     setCreateMeta(null);
-    await swr<CreateMeta>(
-      (pc) => api.getCreateMeta(pk, pc),
-      (v) => {
-        setCreateMeta(v);
-        const types = v.projects.find((p) => p.key === pk)?.issuetypes ?? [];
-        setForm((f) => {
-          if (types.some((t) => t.id === f.issueTypeId)) return f;
-          const pick = types.find((t) => !t.subtask && /task/i.test(t.name)) ?? types.find((t) => !t.subtask) ?? types[0];
-          return { ...f, issueTypeId: pick?.id ?? "" };
-        });
-      },
-    );
+    setMetaLoading(true);
+    try {
+      await swr<CreateMeta>(
+        (pc) => api.getCreateMeta(pk, pc),
+        (v) => {
+          setCreateMeta(v);
+          setMetaLoading(false);
+          const types = v.projects.find((p) => p.key === pk)?.issuetypes ?? [];
+          setForm((f) => {
+            if (types.some((t) => t.id === f.issueTypeId)) return f;
+            const pick = types.find((t) => !t.subtask && /task/i.test(t.name)) ?? types.find((t) => !t.subtask) ?? types[0];
+            return { ...f, issueTypeId: pick?.id ?? "" };
+          });
+        },
+      );
+    } finally {
+      setMetaLoading(false);
+    }
   }
 
   function onProjectChange(pk: string) {
     patch({ projectKey: pk, issueTypeId: "", extra: {} });
-    void loadCreateMeta(pk).catch((e) => app.notify(errorMessage(e), "error"));
+    setLoadError(null);
+    void loadCreateMeta(pk).catch((e) => setLoadError(errorMessage(e)));
   }
 
   // ---- description modes ---------------------------------------------------
@@ -271,6 +286,52 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
       queueMicrotask(() => textarea.current?.focus());
     } else {
       void enterRich(form.description);
+    }
+  }
+
+  /** Insert the clipboard's Markdown at the cursor, converted to Jira markup. */
+  async function pasteMarkdown() {
+    if (pasting) return;
+    setPasting(true);
+    try {
+      const md = (await readClipboardText()).trim();
+      if (!md) {
+        app.notify("Clipboard is empty", "error");
+        return;
+      }
+      if (descMode === "rich" && richEditor.current) {
+        // Insert as whole blocks (after the current top-level block, or in
+        // place of it when it is an empty paragraph) so the first heading /
+        // list of the pasted document is not merged into the current line.
+        const ed = richEditor.current;
+        const { $from } = ed.state.selection;
+        const html = markdownToHtml(md);
+        const emptyTop = $from.depth === 1 && $from.parent.isTextblock && $from.parent.content.size === 0;
+        const chain = ed.chain().focus();
+        if (emptyTop) chain.insertContentAt({ from: $from.before(1), to: $from.after(1) }, html);
+        else chain.insertContentAt($from.after(1), html);
+        chain.run();
+      } else {
+        const wiki = markdownToWiki(md);
+        const ta = textarea.current;
+        const cur = form.description;
+        // The textarea keeps its selection while the button has focus.
+        const s = ta?.selectionStart ?? cur.length;
+        const e = ta?.selectionEnd ?? cur.length;
+        const before = cur.slice(0, s);
+        const after = cur.slice(e);
+        const text = (before && !before.endsWith("\n") ? "\n" : "") + wiki + (after && !after.startsWith("\n") ? "\n" : "");
+        patch({ description: before + text + after });
+        queueMicrotask(() => {
+          ta?.focus();
+          ta?.setSelectionRange(s + text.length, s + text.length);
+        });
+      }
+      if (!looksLikeMarkdown(md)) app.notify("Pasted as plain text (no Markdown syntax found)");
+    } catch (e) {
+      app.notify(`Could not read the clipboard: ${errorMessage(e)}`, "error");
+    } finally {
+      setPasting(false);
     }
   }
 
@@ -329,6 +390,10 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
   async function save() {
     if (saving || loading) return;
     setSaveError(null);
+    if (metaLoading) {
+      setSaveError("Still loading the project's fields — try again in a moment.");
+      return;
+    }
     if (!form.summary.trim()) {
       setSaveError("Summary is required.");
       summaryInput.current?.focus();
@@ -446,6 +511,9 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
             Markup
           </button>
         </div>
+        <button className="ghost" onClick={() => void pasteMarkdown()} disabled={pasting || loading || richBusy} title="Paste the clipboard as Markdown, converted to Jira markup">
+          {pasting && <span className="spin"></span>} ⤓ Paste from Markdown
+        </button>
         <button className="ghost" onClick={() => void toggleOsFullscreen()} title="Toggle fullscreen (F11)">
           ⛶
         </button>
@@ -453,7 +521,7 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
           Cancel
         </button>
         <button className="primary" onClick={() => void save()} disabled={saving || loading || (!isCreate && !dirty)} title="Save (Ctrl+S)">
-          {saving && <span className="spin"></span>}
+          {(saving || (isCreate && metaLoading)) && <span className="spin"></span>}
           {isCreate ? "Create" : "Save"}
         </button>
       </header>
@@ -486,7 +554,18 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
       <div className={css.body}>
         {fieldsOpen && (
           <aside className={css.fields}>
-            {loading ? (
+            {isCreate && projects.length > 0 && (
+              <div className={css.fld}>
+                <span>Project</span>
+                <Picker
+                  value={form.projectKey ? [form.projectKey] : []}
+                  onChange={(ids) => ids[0] && ids[0] !== form.projectKey && onProjectChange(ids[0])}
+                  options={projectOptions}
+                  placeholder="Search projects…"
+                />
+              </div>
+            )}
+            {loading || metaLoading ? (
               <div className="muted">
                 <span className="spin"></span> Loading fields…
               </div>
@@ -496,15 +575,6 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
               <>
                 {isCreate && (
                   <>
-                    <div className={css.fld}>
-                      <span>Project</span>
-                      <Picker
-                        value={form.projectKey ? [form.projectKey] : []}
-                        onChange={(ids) => ids[0] && ids[0] !== form.projectKey && onProjectChange(ids[0])}
-                        options={projectOptions}
-                        placeholder="Search projects…"
-                      />
-                    </div>
                     <div className={css.fld}>
                       <span>Issue type</span>
                       <Picker
@@ -670,6 +740,7 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
                   disabled={saving}
                   autoFocus={!isCreate}
                   onReady={onRichReady}
+                  editorRef={richEditor}
                   onChange={onRichChange}
                   onImageClick={openImage}
                 />
