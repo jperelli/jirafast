@@ -1,6 +1,6 @@
 {
   "name": "jirafast",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "A very fast desktop client for Jira Server / Data Center",
   "type": "module",
   "private": true,

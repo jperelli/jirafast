@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.2.0 — 2026-09-29
 
 - Faster list/board search typing: rows and cards only re-render when they change.
 - Smaller startup bundle: Markdown conversion loads on first use.
