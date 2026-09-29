@@ -249,8 +249,18 @@ export function saveOpenFolders(open: Set<string>) {
 export function matchesBoardQuery(issue: Issue, query: string): boolean {
   const terms = query.toLowerCase().split(/\s+/).filter(Boolean);
   if (!terms.length) return true;
+  const hay = haystackOf(issue);
+  return terms.every((t) => hay.includes(t));
+}
+
+/** Search text per issue object; issue objects are replaced (not mutated) when refreshed. */
+const haystacks = new WeakMap<Issue, string>();
+
+function haystackOf(issue: Issue): string {
+  let hay = haystacks.get(issue);
+  if (hay !== undefined) return hay;
   const f = issue.fields;
-  const hay = [
+  hay = [
     issue.key,
     f.summary,
     ...(f.labels ?? []),
@@ -264,5 +274,6 @@ export function matchesBoardQuery(issue: Issue, query: string): boolean {
     .filter((s): s is string => typeof s === "string")
     .join("\n")
     .toLowerCase();
-  return terms.every((t) => hay.includes(t));
+  haystacks.set(issue, hay);
+  return hay;
 }

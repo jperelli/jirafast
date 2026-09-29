@@ -2,13 +2,15 @@ mod cache;
 mod jira;
 mod settings;
 
-use cache::Cache;
+use cache::{Cache, Cached};
+use futures::future::{BoxFuture, FutureExt, Shared};
 use jira::{JiraClient, JiraError, Result};
 use serde::Serialize;
 use serde_json::Value;
 use settings::{PublicSettings, Settings};
+use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 use tauri::http::{header, Response, StatusCode};
 use tauri::{AppHandle, Emitter, Manager, State};
 
@@ -32,12 +34,16 @@ const LIST_FIELDS: &[&str] = &[
 /// Upper bound on issues loaded for one kanban board.
 const BOARD_ISSUE_LIMIT: usize = 2000;
 
+/// One in-flight issue download, awaited by everyone who asked for that key.
+type IssueFetch = Shared<BoxFuture<'static, std::result::Result<Cached, JiraError>>>;
+
 pub struct AppState {
     config_dir: PathBuf,
     settings: RwLock<Option<Settings>>,
     client: RwLock<Option<Arc<JiraClient>>>,
     cache: Cache,
     prefetch_sem: Arc<tokio::sync::Semaphore>,
+    inflight: Mutex<HashMap<String, IssueFetch>>,
 }
 
 impl AppState {
@@ -104,6 +110,42 @@ where
 
 fn issue_cache_key(key: &str) -> String {
     format!("issue:{}", key.to_uppercase())
+}
+
+/// Download an issue, store it and emit `issue-cached`. Concurrent requests
+/// for the same key (the user opening an issue that a prefetch is already
+/// downloading, overlapping prefetch batches) share a single HTTP request.
+fn fetch_issue(app: &AppHandle, client: Arc<JiraClient>, key: &str) -> IssueFetch {
+    let key = key.trim().to_string();
+    let ck = issue_cache_key(&key);
+    let state = app.state::<AppState>();
+    let mut inflight = state.inflight.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(f) = inflight.get(&ck) {
+        return f.clone();
+    }
+    let app = app.clone();
+    let fut = {
+        let ck = ck.clone();
+        async move {
+            let res = client.issue(&key).await;
+            let st = app.state::<AppState>();
+            let out = res.map(|v| {
+                let c = st.cache.put(&ck, v);
+                let _ = app.emit("issue-cached", &key);
+                c
+            });
+            if let Ok(mut m) = st.inflight.lock() {
+                m.remove(&ck);
+            }
+            out
+        }
+    }
+    .boxed()
+    .shared();
+    // Drive it independently of the callers so the entry is always cleaned up.
+    tauri::async_runtime::spawn(fut.clone());
+    inflight.insert(ck, fut.clone());
+    fut
 }
 
 // ---- commands ------------------------------------------------------------
@@ -178,16 +220,18 @@ async fn search_issues(
 
 #[tauri::command]
 async fn get_issue(
+    app: AppHandle,
     state: State<'_, AppState>,
     key: String,
     prefer_cache: bool,
 ) -> Result<Option<CachedResponse>> {
     let client = state.client()?;
-    let ck = issue_cache_key(&key);
-    cached_or_fetch(&state, &ck, prefer_cache, async {
-        client.issue(key.trim()).await
-    })
-    .await
+    if prefer_cache {
+        let ck = issue_cache_key(&key);
+        return Ok(state.cache.get(&ck).map(CachedResponse::from_cache));
+    }
+    let cached = fetch_issue(&app, client, &key).await?;
+    Ok(Some(CachedResponse::fresh(cached)))
 }
 
 /// Warm the cache for issues the user is likely to open next. Emits
@@ -200,16 +244,18 @@ async fn prefetch_issues(
     max_age_secs: u64,
 ) -> Result<()> {
     let client = state.client()?;
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
+    let is_fresh = move |cache: &Cache, key: &str| {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+        cache
+            .get(&issue_cache_key(key))
+            .is_some_and(|c| now.saturating_sub(c.fetched_at) < max_age_secs)
+    };
     for key in keys.into_iter().take(50) {
-        let ck = issue_cache_key(&key);
-        if let Some(c) = state.cache.get(&ck) {
-            if now.saturating_sub(c.fetched_at) < max_age_secs {
-                continue;
-            }
+        if is_fresh(&state.cache, &key) {
+            continue;
         }
         let client = client.clone();
         let sem = state.prefetch_sem.clone();
@@ -218,13 +264,13 @@ async fn prefetch_issues(
             let Ok(_permit) = sem.acquire().await else {
                 return;
             };
-            match client.issue(&key).await {
-                Ok(v) => {
-                    let st = app.state::<AppState>();
-                    st.cache.put(&ck, v);
-                    let _ = app.emit("issue-cached", &key);
-                }
-                Err(e) => log::debug!("prefetch {key} failed: {e}"),
+            // Another request (the user opening it, an earlier batch) may have
+            // landed it while this task waited for a permit.
+            if is_fresh(&app.state::<AppState>().cache, &key) {
+                return;
+            }
+            if let Err(e) = fetch_issue(&app, client, &key).await {
+                log::debug!("prefetch {key} failed: {e}");
             }
         });
     }
@@ -563,6 +609,7 @@ pub fn run() {
                 client: RwLock::new(client),
                 cache: Cache::new(cache_dir),
                 prefetch_sem: Arc::new(tokio::sync::Semaphore::new(4)),
+                inflight: Mutex::new(HashMap::new()),
             });
             Ok(())
         })

@@ -8,12 +8,15 @@
 // Accepts any PAT (Bearer) or basic credentials except the literal token
 // "bad", which returns 401 so the error path can be exercised. Adds an
 // artificial latency (MOCK_LATENCY_MS, default 250) so cache hits are visible.
+// MOCK_ISSUES (default 38) controls how many generated issues exist, for
+// stress-testing long lists and boards.
 
 import http from "node:http";
 import { URL } from "node:url";
 
 const PORT = Number(process.env.PORT ?? 8080);
 const LATENCY = Number(process.env.MOCK_LATENCY_MS ?? 250);
+const GENERATED_ISSUES = Number(process.env.MOCK_ISSUES ?? 38);
 const CTX = "/jira";
 const ORIGIN = `http://127.0.0.1:${PORT}`;
 const BASE = `${ORIGIN}${CTX}`;
@@ -377,7 +380,7 @@ const cacheIssue = mkIssue({
   daysAgo: 0.5,
 });
 
-for (let i = 0; i < 38; i++) {
+for (let i = 0; i < GENERATED_ISSUES; i++) {
   const proj = pick(projects, i);
   const type = pick([types.bug, types.task, types.story, types.bug, types.epic], i);
   const st = pick([statuses.todo, statuses.progress, statuses.review, statuses.done, statuses.todo], i);

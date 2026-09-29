@@ -5,7 +5,6 @@ import { app, useApp, useAppShallow, useBaseUrl } from "../lib/store";
 import { api, errorMessage } from "../lib/api";
 import { absoluteTime, formatBytes, relativeTime } from "../lib/format";
 import { toAssetUrl, toJiraUrl } from "../lib/html";
-import { renderedHtmlForClipboard, renderedHtmlToMarkdown } from "../lib/markdown";
 import { writeClipboardHtml, writeClipboardText } from "../lib/clipboard";
 import type { Attachment, Comment, LinkedIssue, Transition } from "../lib/types";
 import Avatar from "./Avatar";
@@ -51,7 +50,11 @@ export default function IssueView() {
       if (kind === "wiki") {
         await writeClipboardText(wiki);
         app.notify("Copied as Jira markup");
-      } else if (kind === "md") {
+        return;
+      }
+      // Markdown/Turndown live in the editor chunk; only load them when a copy needs them.
+      const { renderedHtmlForClipboard, renderedHtmlToMarkdown } = await import("../lib/markdown");
+      if (kind === "md") {
         await writeClipboardText(renderedHtmlToMarkdown(html, baseUrl));
         app.notify("Copied as Markdown");
       } else {

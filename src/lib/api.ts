@@ -77,11 +77,14 @@ export const api = {
 /**
  * Stale-while-revalidate helper: `onValue` fires immediately with the cached
  * value when there is one, then again with the fresh one. Returns the fresh
- * promise so callers can await completion / catch errors.
+ * promise so callers can await completion / catch errors. A cached copy
+ * younger than `freshForMs` (e.g. just prefetched) is served as-is without
+ * a revalidating request.
  */
 export async function swr<T>(
   fetch: (preferCache: boolean) => Promise<Cached<T> | null>,
   onValue: (value: T, fromCache: boolean) => void,
+  opts: { freshForMs?: number } = {},
 ): Promise<T | null> {
   let cachedSeen = false;
   try {
@@ -89,6 +92,7 @@ export async function swr<T>(
     if (cached) {
       cachedSeen = true;
       onValue(cached.value, true);
+      if (opts.freshForMs && Date.now() - cached.fetched_at * 1000 < opts.freshForMs) return cached.value;
     }
   } catch {
     // Cache misses are not errors; the fresh fetch below reports real ones.

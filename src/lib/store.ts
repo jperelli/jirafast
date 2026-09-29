@@ -19,6 +19,8 @@ export const QUICK_VIEWS: QuickView[] = [
 ];
 
 const PAGE_SIZE = 50;
+/** Issues fetched/prefetched this recently open without a revalidating request (`r` still forces one). */
+const ISSUE_FRESH_MS = 20_000;
 export const ISSUE_KEY_RE = /^\s*([A-Za-z][A-Za-z0-9_]+-\d+)\s*$/;
 const JQL_HINT_RE = /(=|!=|~|\bORDER BY\b|\bAND\b|\bOR\b|\bIN\b|\bIS\b|>=|<=)/i;
 
@@ -215,7 +217,8 @@ export const app = {
     );
     void api.onIssueCached((key) => {
       const s = get();
-      if (key === s.selectedKey && !s.issue) void app.openIssue(key, { push: false });
+      // Recover an issue whose own load failed; one already loading will resolve from the same request.
+      if (key === s.selectedKey && !s.issue && !s.issueLoading) void app.openIssue(key, { push: false });
     });
   },
 
@@ -428,14 +431,19 @@ export const app = {
     }
     const seq = ++issueSeq;
     set({ selectedKey: key, issueError: null, issueLoading: true, issue: s.issue?.key === key ? s.issue : null });
+    let prefetched = false;
     try {
       await swr<Issue>(
         (pc) => api.getIssue(key, pc),
         (issue, fromCache) => {
           if (seq !== issueSeq) return;
           set({ issue, issueFromCache: fromCache, issueError: null });
-          if (fromCache) prefetchNeighbours(key);
+          if (!prefetched) {
+            prefetched = true;
+            prefetchNeighbours(key);
+          }
         },
+        { freshForMs: ISSUE_FRESH_MS },
       );
     } catch (e) {
       if (seq !== issueSeq) return;

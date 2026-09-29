@@ -15,13 +15,18 @@ function getAssetBase(): string {
   return assetBase;
 }
 
+let lastOrigin: { baseUrl: string; origin: string; path: string } | null = null;
+
+/** Parsed once per base URL: this runs for every icon/avatar/link of every row. */
 function originOf(baseUrl: string): { origin: string; path: string } {
+  if (lastOrigin?.baseUrl === baseUrl) return lastOrigin;
   try {
     const u = new URL(baseUrl);
-    return { origin: u.origin, path: u.pathname.replace(/\/$/, "") };
+    lastOrigin = { baseUrl, origin: u.origin, path: u.pathname.replace(/\/$/, "") };
   } catch {
-    return { origin: "", path: "" };
+    lastOrigin = { baseUrl, origin: "", path: "" };
   }
+  return lastOrigin;
 }
 
 /**

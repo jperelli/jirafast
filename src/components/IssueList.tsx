@@ -1,30 +1,22 @@
-import { useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
+import { memo, useEffect, useRef, useState, type FormEvent, type RefObject } from "react";
 import { app, useApp, useAppShallow, useBaseUrl } from "../lib/store";
 import { relativeTime } from "../lib/format";
 import { toAssetUrl } from "../lib/html";
+import type { Issue } from "../lib/types";
 import Avatar from "./Avatar";
 import css from "./IssueList.module.css";
 
 export default function IssueList({ searchBox }: { searchBox: RefObject<HTMLInputElement | null> }) {
-  const baseUrl = useBaseUrl();
   const issues = useApp((s) => s.issues);
   const selectedKey = useApp((s) => s.selectedKey);
-  const { jql, viewName, scopeProject, total, listLoading, listError } = useAppShallow((s) => ({
+  const { jql, viewName, total, listLoading, listError } = useAppShallow((s) => ({
     jql: s.jql,
     viewName: s.viewName,
-    scopeProject: s.scopeProject,
     total: s.total,
     listLoading: s.listLoading,
     listError: s.listError,
   }));
-  const [query, setQuery] = useState("");
   const listEl = useRef<HTMLDivElement>(null);
-
-  function submit(e: FormEvent) {
-    e.preventDefault();
-    app.quickSearch(query);
-    searchBox.current?.blur();
-  }
 
   function onScroll() {
     const el = listEl.current;
@@ -38,32 +30,10 @@ export default function IssueList({ searchBox }: { searchBox: RefObject<HTMLInpu
     listEl.current.querySelector<HTMLElement>(`[data-key="${selectedKey}"]`)?.scrollIntoView({ block: "nearest" });
   }, [selectedKey]);
 
-  const icon = (url: string | undefined): string | null => (url ? (toAssetUrl(url, baseUrl) ?? url) : null);
-
   return (
     <section className={css.listPane}>
       <header className={css.header}>
-        <form className={`${css.search} ${scopeProject ? css.scoped : ""}`} onSubmit={submit}>
-          {scopeProject && (
-            <button
-              type="button"
-              className={`${css.scope} mono`}
-              title={`Searching only in ${scopeProject} — click to search all projects`}
-              onClick={() => app.clearScope()}
-            >
-              {scopeProject}
-              <span className={css.scopeX}>×</span>
-            </button>
-          )}
-          <input
-            ref={searchBox}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            type="search"
-            placeholder={scopeProject ? `Search in ${scopeProject}…  ( / )` : "Search text, issue key or JQL…  ( / )"}
-            spellCheck={false}
-          />
-        </form>
+        <SearchForm searchBox={searchBox} />
         <div className={css.title}>
           <span className={css.name} title={jql}>
             {viewName}
@@ -84,42 +54,9 @@ export default function IssueList({ searchBox }: { searchBox: RefObject<HTMLInpu
       {listError && <div className={css.error}>{listError}</div>}
 
       <div className={css.rows} ref={listEl} onScroll={onScroll}>
-        {issues.map((issue) => {
-          const f = issue.fields;
-          const cat = f.status?.statusCategory?.key ?? "";
-          const done = cat === "done" || !!f.resolution;
-          const typeIcon = icon(f.issuetype?.iconUrl);
-          const prioIcon = f.priority ? icon(f.priority.iconUrl) : null;
-          return (
-            <button
-              key={issue.key}
-              className={`${css.row} ${issue.key === selectedKey ? css.active : ""} ${done ? css.done : ""}`}
-              data-key={issue.key}
-              onClick={() => app.openIssue(issue.key)}
-            >
-              <div className={css.line1}>
-                {typeIcon && <img className={css.type} src={typeIcon} alt={f.issuetype?.name ?? ""} title={f.issuetype?.name} />}
-                <span className={`${css.key} mono`}>{issue.key}</span>
-                {f.priority && prioIcon && <img className={css.prio} src={prioIcon} alt={f.priority.name} title={f.priority.name} />}
-                <span className={css.grow}></span>
-                <span className={`lozenge ${cat}`}>{f.status?.name ?? ""}</span>
-              </div>
-              <div className={css.summary}>{f.summary}</div>
-              <div className={`${css.line3} muted`}>
-                {f.assignee ? (
-                  <>
-                    <Avatar user={f.assignee} size={16} />
-                    <span className={css.assignee}>{f.assignee.displayName}</span>
-                  </>
-                ) : (
-                  <span className={css.assignee}>Unassigned</span>
-                )}
-                <span className={css.grow}></span>
-                <span title={f.updated}>{relativeTime(f.updated)}</span>
-              </div>
-            </button>
-          );
-        })}
+        {issues.map((issue) => (
+          <Row key={issue.key} issue={issue} active={issue.key === selectedKey} />
+        ))}
         {!issues.length && !listLoading && !listError && <div className={`${css.empty} muted`}>No issues match.</div>}
         {issues.length > 0 && issues.length < total && (
           <button className={`ghost ${css.more}`} onClick={() => app.loadMore()} disabled={listLoading}>
@@ -130,3 +67,74 @@ export default function IssueList({ searchBox }: { searchBox: RefObject<HTMLInpu
     </section>
   );
 }
+
+/** Owns the query text so each keystroke re-renders only this form, not the rows. */
+function SearchForm({ searchBox }: { searchBox: RefObject<HTMLInputElement | null> }) {
+  const scopeProject = useApp((s) => s.scopeProject);
+  const [query, setQuery] = useState("");
+
+  function submit(e: FormEvent) {
+    e.preventDefault();
+    app.quickSearch(query);
+    searchBox.current?.blur();
+  }
+
+  return (
+    <form className={`${css.search} ${scopeProject ? css.scoped : ""}`} onSubmit={submit}>
+      {scopeProject && (
+        <button
+          type="button"
+          className={`${css.scope} mono`}
+          title={`Searching only in ${scopeProject} — click to search all projects`}
+          onClick={() => app.clearScope()}
+        >
+          {scopeProject}
+          <span className={css.scopeX}>×</span>
+        </button>
+      )}
+      <input
+        ref={searchBox}
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        type="search"
+        placeholder={scopeProject ? `Search in ${scopeProject}…  ( / )` : "Search text, issue key or JQL…  ( / )"}
+        spellCheck={false}
+      />
+    </form>
+  );
+}
+
+/** Memoised: a selection change re-renders two rows, not the whole list. */
+const Row = memo(function Row({ issue, active }: { issue: Issue; active: boolean }) {
+  const baseUrl = useBaseUrl();
+  const icon = (url: string | undefined): string | null => (url ? (toAssetUrl(url, baseUrl) ?? url) : null);
+  const f = issue.fields;
+  const cat = f.status?.statusCategory?.key ?? "";
+  const done = cat === "done" || !!f.resolution;
+  const typeIcon = icon(f.issuetype?.iconUrl);
+  const prioIcon = f.priority ? icon(f.priority.iconUrl) : null;
+  return (
+    <button className={`${css.row} ${active ? css.active : ""} ${done ? css.done : ""}`} data-key={issue.key} onClick={() => app.openIssue(issue.key)}>
+      <div className={css.line1}>
+        {typeIcon && <img className={css.type} src={typeIcon} alt={f.issuetype?.name ?? ""} title={f.issuetype?.name} />}
+        <span className={`${css.key} mono`}>{issue.key}</span>
+        {f.priority && prioIcon && <img className={css.prio} src={prioIcon} alt={f.priority.name} title={f.priority.name} />}
+        <span className={css.grow}></span>
+        <span className={`lozenge ${cat}`}>{f.status?.name ?? ""}</span>
+      </div>
+      <div className={css.summary}>{f.summary}</div>
+      <div className={`${css.line3} muted`}>
+        {f.assignee ? (
+          <>
+            <Avatar user={f.assignee} size={16} />
+            <span className={css.assignee}>{f.assignee.displayName}</span>
+          </>
+        ) : (
+          <span className={css.assignee}>Unassigned</span>
+        )}
+        <span className={css.grow}></span>
+        <span title={f.updated}>{relativeTime(f.updated)}</span>
+      </div>
+    </button>
+  );
+});

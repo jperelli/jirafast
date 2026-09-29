@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Faster list/board search typing: rows and cards only re-render when they change.
+- Smaller startup bundle: Markdown conversion loads on first use.
+- Just-prefetched issues open without a revalidating request; duplicate downloads deduplicated.
+
 ## 0.1.0 — 2026-09-14
 
 - Tauri v2 desktop client for Jira Server / Data Center 10.3 (PAT or basic auth).

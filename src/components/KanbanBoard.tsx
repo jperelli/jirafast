@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
+import { memo, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject } from "react";
 import { app, ISSUE_KEY_RE, useApp, useAppShallow, useBaseUrl } from "../lib/store";
 import { columnsOf, DONE_WINDOWS, groupByColumn, matchesBoardQuery } from "../lib/board";
 import { relativeTime } from "../lib/format";
@@ -8,7 +8,6 @@ import Avatar from "./Avatar";
 import css from "./KanbanBoard.module.css";
 
 export default function KanbanBoard({ searchBox }: { searchBox: RefObject<HTMLInputElement | null> }) {
-  const baseUrl = useBaseUrl();
   const issues = useApp((s) => s.issues);
   const boardConfig = useApp((s) => s.boardConfig);
   const selectedKey = useApp((s) => s.selectedKey);
@@ -50,7 +49,6 @@ export default function KanbanBoard({ searchBox }: { searchBox: RefObject<HTMLIn
     boardEl.current.querySelector<HTMLElement>(`[data-key="${selectedKey}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [selectedKey]);
 
-  const icon = (url: string | undefined): string | null => (url ? (toAssetUrl(url, baseUrl) ?? url) : null);
   const lastIdx = columns.length - 1;
 
   return (
@@ -118,7 +116,7 @@ export default function KanbanBoard({ searchBox }: { searchBox: RefObject<HTMLIn
               </div>
               <div className={css.cards}>
                 {cards.map((issue) => (
-                  <Card key={issue.key} issue={issue} active={issue.key === selectedKey} done={ci === lastIdx} icon={icon} />
+                  <Card key={issue.key} issue={issue} active={issue.key === selectedKey} done={ci === lastIdx} />
                 ))}
                 {!cards.length && !listLoading && (
                   <div className={`${css.emptyCol} muted`}>{filtering ? "No matches" : ci === lastIdx && doneWindow !== "all" ? "Nothing completed in this window" : "No issues"}</div>
@@ -132,17 +130,10 @@ export default function KanbanBoard({ searchBox }: { searchBox: RefObject<HTMLIn
   );
 }
 
-function Card({
-  issue,
-  active,
-  done,
-  icon,
-}: {
-  issue: Issue;
-  active: boolean;
-  done: boolean;
-  icon: (url: string | undefined) => string | null;
-}) {
+/** Memoised: typing in the board search or selecting a card re-renders only the affected cards. */
+const Card = memo(function Card({ issue, active, done }: { issue: Issue; active: boolean; done: boolean }) {
+  const baseUrl = useBaseUrl();
+  const icon = (url: string | undefined): string | null => (url ? (toAssetUrl(url, baseUrl) ?? url) : null);
   const f = issue.fields;
   const typeIcon = icon(f.issuetype?.iconUrl);
   const prioIcon = f.priority ? icon(f.priority.iconUrl) : null;
@@ -169,4 +160,4 @@ function Card({
       )}
     </button>
   );
-}
+});

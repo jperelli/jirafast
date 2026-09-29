@@ -35,7 +35,7 @@ impl Auth {
     }
 }
 
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum JiraError {
     #[error("invalid Jira URL: {0}")]
     InvalidUrl(String),
