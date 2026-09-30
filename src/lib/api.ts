@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  Attachment,
   Board,
   BoardConfig,
   BoardProjectInfo,
@@ -38,6 +39,17 @@ export const api = {
     invoke<void>("prefetch_issues", { keys, maxAgeSecs }),
 
   addComment: (key: string, body: string) => invoke<Comment>("add_comment", { key, body }),
+  /** Bytes go as the raw IPC body; metadata as headers (percent-encoded, headers are ASCII). */
+  addAttachment: async (key: string, file: Blob, filename: string) => {
+    const bytes = new Uint8Array(await file.arrayBuffer());
+    return invoke<Attachment[]>("add_attachment", bytes, {
+      headers: {
+        "x-issue-key": encodeURIComponent(key),
+        "x-file-name": encodeURIComponent(filename),
+        "x-content-type": encodeURIComponent(file.type || "application/octet-stream"),
+      },
+    });
+  },
   updateIssue: (key: string, fields: IssueFieldsInput) => invoke<Issue | null>("update_issue", { key, fields }),
   createIssue: (fields: IssueFieldsInput) => invoke<Issue>("create_issue", { fields }),
   getEditMeta: (key: string) => invoke<EditMeta>("get_edit_meta", { key }),

@@ -338,6 +338,37 @@ impl JiraClient {
         Ok(text)
     }
 
+    /// `POST /issue/{key}/attachments` (multipart, field `file`); returns the
+    /// array of created attachments.
+    pub async fn add_attachment(
+        &self,
+        key: &str,
+        filename: &str,
+        content_type: &str,
+        bytes: Vec<u8>,
+    ) -> Result<Value> {
+        let part = reqwest::multipart::Part::bytes(bytes)
+            .file_name(filename.to_string())
+            .mime_str(content_type)
+            .map_err(|e| JiraError::Decode(format!("content type {content_type}: {e}")))?;
+        let form = reqwest::multipart::Form::new().part("file", part);
+        let resp = self
+            .http
+            .post(self.api(&format!("issue/{}/attachments", key)))
+            .multipart(form)
+            .send()
+            .await?;
+        let status = resp.status();
+        let text = resp.text().await?;
+        if !status.is_success() {
+            return Err(JiraError::Http {
+                status: status.as_u16(),
+                message: extract_error_message(&text, status),
+            });
+        }
+        serde_json::from_str(&text).map_err(|e| JiraError::Decode(e.to_string()))
+    }
+
     pub async fn add_comment(&self, key: &str, body: &str) -> Result<Value> {
         let url = format!(
             "{}?expand=renderedBody",

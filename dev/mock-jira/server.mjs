@@ -305,7 +305,7 @@ function renderWiki(text) {
       }
       const thumb = esc.match(/^!([^|!]+)\|thumbnail!$/);
       if (thumb) {
-        const att = [...issues.values()].flatMap((i) => i.fields.attachment ?? []).find((a) => a.filename === thumb[1]);
+        const att = findAttachment(thumb[1]);
         if (att) {
           return `<p><span class="image-wrap" style=""><a href="${CTX}/secure/attachment/${att.id}/${att.filename}" title="${att.filename}"><img src="${CTX}/secure/thumbnail/${att.id}/_thumb_${att.id}.png" alt="${att.filename}" style="border: 0px solid black" /></a></span></p>`;
         }
@@ -319,8 +319,18 @@ function renderWiki(text) {
     .join("\n");
 }
 
+function findAttachment(filename) {
+  const all = [...issues.values()].flatMap((i) => i.fields.attachment ?? []);
+  return all.reverse().find((a) => a.filename === filename);
+}
+
 function inline(esc) {
   return esc
+    .replace(/!([^|!\s]+\.(?:png|jpe?g|gif|webp|svg|bmp))(?:\|[^!]*)?!/gi, (_m, name) => {
+      const att = findAttachment(name);
+      const src = att ? `${CTX}/secure/attachment/${att.id}/${encodeURIComponent(att.filename)}` : `${CTX}/images/icons/wait.gif`;
+      return `<span class="image-wrap" style=""><img src="${src}" alt="${name}" style="border: 0px solid black" /></span>`;
+    })
     .replace(/\{color:([#\w]+)\}([\s\S]*?)\{color\}/g, '<font color="$1">$2</font>')
     .replace(/\{\{([^}]+)\}\}/g, "<tt>$1</tt>")
     .replace(/\[([^\]|]+)\|(https?:[^\]]+)\]/g, '<a href="$2" class="external-link" rel="nofollow">$1</a>')
@@ -786,12 +796,45 @@ function svg(res, body) {
   res.end(body);
 }
 
-async function readBody(req) {
+async function readRaw(req) {
   const chunks = [];
   for await (const c of req) chunks.push(c);
-  const text = Buffer.concat(chunks).toString("utf8");
+  return Buffer.concat(chunks);
+}
+
+async function readBody(req) {
+  const text = (await readRaw(req)).toString("utf8");
   return text ? JSON.parse(text) : {};
 }
+
+/** Minimal multipart/form-data parser: returns `{ name, filename, contentType, data }` per part. */
+async function readMultipart(req) {
+  const m = /boundary=(?:"([^"]+)"|([^;]+))/.exec(req.headers["content-type"] ?? "");
+  if (!m) return [];
+  const boundary = Buffer.from(`--${m[1] ?? m[2]}`);
+  const raw = await readRaw(req);
+  const parts = [];
+  let start = raw.indexOf(boundary);
+  while (start !== -1) {
+    start += boundary.length;
+    if (raw.slice(start, start + 2).toString() === "--") break;
+    const end = raw.indexOf(boundary, start);
+    if (end === -1) break;
+    const chunk = raw.slice(start + 2, end - 2); // strip leading CRLF and trailing CRLF
+    const sep = chunk.indexOf("\r\n\r\n");
+    const headers = chunk.slice(0, sep).toString("latin1");
+    const name = /name="([^"]*)"/.exec(headers)?.[1];
+    const filename = /filename="([^"]*)"/.exec(headers)?.[1];
+    const contentType = /content-type:\s*([^\r\n]+)/i.exec(headers)?.[1]?.trim();
+    parts.push({ name, filename, contentType, data: chunk.slice(sep + 4) });
+    start = end;
+  }
+  return parts;
+}
+
+/** Bytes of attachments uploaded through the API, by attachment id. */
+const uploaded = new Map();
+let nextAttachmentId = 40000;
 
 function authorized(req) {
   const h = req.headers.authorization ?? "";
@@ -839,6 +882,12 @@ const server = http.createServer(async (req, res) => {
       const name = p.split("/").pop().replace(".svg", "");
       const color = { highest: "#cd1317", high: "#e9494a", medium: "#e97f33", low: "#2d8738" }[name] ?? "#888";
       return svg(res, `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16"><path d="M3 ${name === "low" ? 5 : 11} l5 ${name === "low" ? 6 : -6} 5 ${name === "low" ? -6 : 6}" stroke="${color}" stroke-width="2.5" fill="none" stroke-linecap="round" stroke-linejoin="round"/></svg>`);
+    }
+    const up = /^\/secure\/(?:attachment|thumbnail)\/(\d+)\//.exec(p);
+    if (up && uploaded.has(up[1])) {
+      const { contentType, data } = uploaded.get(up[1]);
+      res.writeHead(200, { "Content-Type": contentType, "Content-Length": data.length });
+      return res.end(data);
     }
     if (p.startsWith("/secure/thumbnail/") || p.startsWith("/secure/attachment/30001/")) return svg(res, svgThumb());
     if (p.startsWith("/secure/attachment/30003/")) return svg(res, svgAvatar(3, "BB"));
@@ -1067,6 +1116,21 @@ const server = http.createServer(async (req, res) => {
         return res.end();
       }
       if (sub === "editmeta" && req.method === "GET") return json(res, 200, { fields: fieldMeta(issue.fields.project) });
+      if (sub === "attachments" && req.method === "POST") {
+        if (req.headers["x-atlassian-token"] !== "no-check") return jiraError(res, 404, "XSRF check failed");
+        const files = (await readMultipart(req)).filter((x) => x.name === "file" && x.filename);
+        if (!files.length) return jiraError(res, 400, "No file(s) attached");
+        const created = files.map((f) => {
+          const id = nextAttachmentId++;
+          uploaded.set(String(id), { contentType: f.contentType ?? "application/octet-stream", data: f.data });
+          const att = mkAttachment(id, f.filename, f.contentType ?? "application/octet-stream", f.data.length, ME);
+          att.created = daysAgoIso(0);
+          issue.fields.attachment = [...(issue.fields.attachment ?? []), att];
+          return att;
+        });
+        issue.fields.updated = daysAgoIso(0);
+        return json(res, 200, created);
+      }
       if (sub === "comment" && req.method === "POST") {
         const body = await readBody(req);
         if (!body.body?.trim()) return jiraError(res, 400, "Comment body can not be empty!");

@@ -13,7 +13,7 @@ import { genericFields, initialValue, sameValue, toPayload, type FieldValue, typ
 import { allowedOptions, issueSearcher, labelSearcher, normalizeLabel, rawLabels, searchUsers } from "../lib/pickers";
 import FieldControl from "./FieldControl";
 import Picker from "./Picker";
-import RichEditor from "./RichEditor";
+import RichEditor, { type PastedImage } from "./RichEditor";
 import css from "./IssueEditor.module.css";
 
 type DescMode = "rich" | "markup";
@@ -72,6 +72,29 @@ function sameSet(a: string[], b: string[]): boolean {
   return a.length === b.length && a.every((x) => b.includes(x));
 }
 
+interface PendingImage extends PastedImage {
+  /** Attachment file name; the description references it as `!name!`. */
+  name: string;
+}
+
+const MIME_EXT: Record<string, string> = { "image/png": "png", "image/jpeg": "jpg", "image/gif": "gif", "image/webp": "webp", "image/svg+xml": "svg", "image/bmp": "bmp" };
+
+/**
+ * Clipboard images arrive as `image.png`; name them by timestamp so several
+ * pastes (and existing attachments) never share a `!name!` reference.
+ */
+function uniqueFilename(file: File, taken: Set<string>): string {
+  const ext = MIME_EXT[file.type] ?? (file.name.includes(".") ? file.name.split(".").pop()!.toLowerCase() : "png");
+  const generic = !file.name || /^(image|blob|pasted[-_ ]?image|unnamed)(\.\w+)?$/i.test(file.name);
+  const stem = generic ? `pasted-${new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "").replace("T", "-")}` : file.name.replace(/\.[^.]+$/, "");
+  let name = `${stem}.${ext}`;
+  for (let i = 2; taken.has(name); i++) name = `${stem}-${i}.${ext}`;
+  return name;
+}
+
+const escapeRegExp = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const attr = (s: string) => s.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;");
+
 async function toggleOsFullscreen() {
   const w = getCurrentWindow();
   await w.setFullscreen(!(await w.isFullscreen()));
@@ -112,6 +135,10 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
   const richSource = useRef("");
   const richEditor = useRef<Editor | null>(null);
   const [pasting, setPasting] = useState(false);
+  // Pasted/dropped images: uploaded right away for existing issues, after
+  // create for new ones (Jira needs an issue to attach to).
+  const [uploading, setUploading] = useState(0);
+  const pendingImages = useRef<PendingImage[]>([]);
   const textarea = useRef<HTMLTextAreaElement>(null);
   const summaryInput = useRef<HTMLInputElement>(null);
 
@@ -256,9 +283,22 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
   async function enterRich(markup: string, rendered: string | null = null) {
     setRichBusy(true);
     try {
-      const html = markup.trim() ? (rendered ?? (await api.renderWiki(markup, key ?? undefined))) : "";
+      // Images queued for upload don't exist on Jira yet, so their `!name!`
+      // refs are swapped for tokens around the render and put back as the
+      // local placeholders afterwards.
+      const queued = pendingImages.current.filter((p) => markup.includes(`!${p.name}`));
+      const token = (i: number) => `JFPENDINGIMG${i}JF`;
+      let source = markup;
+      queued.forEach((p, i) => {
+        source = source.replace(new RegExp(`!${escapeRegExp(p.name)}(\\|[^!]*)?!`, "g"), token(i));
+      });
+      const html = source.trim() ? (rendered ?? (await api.renderWiki(source, key ?? undefined))) : "";
+      let editorHtml = renderedToEditorHtml(html, baseUrl);
+      queued.forEach((p, i) => {
+        editorHtml = editorHtml.split(token(i)).join(`<img src="${attr(p.src)}" alt="${attr(p.name)}" data-upload-id="${attr(p.uploadId)}">`);
+      });
       richSource.current = markup;
-      setRichHtml(renderedToEditorHtml(html, baseUrl));
+      setRichHtml(editorHtml);
       setRichKey((n) => n + 1);
       setDescMode("rich");
     } catch (e) {
@@ -394,6 +434,10 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
       setSaveError("Still loading the project's fields — try again in a moment.");
       return;
     }
+    if (uploading) {
+      setSaveError("An image is still uploading — try again in a moment.");
+      return;
+    }
     if (!form.summary.trim()) {
       setSaveError("Summary is required.");
       summaryInput.current?.focus();
@@ -417,6 +461,11 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
         const created = await api.createIssue(buildCreate());
         app.notify(`${created.key} created`);
         app.addCreatedIssue(created);
+        if (pendingImages.current.length) {
+          await uploadPending(created.key);
+          const fresh = await api.getIssue(created.key, false).catch(() => null);
+          if (fresh) app.applyIssue(fresh.value);
+        }
       }
       app.closeEditor();
     } catch (e) {
@@ -479,6 +528,75 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
     app.openLightbox([{ src, title: alt || "Image" }], 0);
   }
 
+  // ---- image upload --------------------------------------------------------
+  function attachmentNames(): Set<string> {
+    const names = new Set<string>((original?.fields.attachment ?? []).map((a) => a.filename));
+    for (const p of pendingImages.current) names.add(p.name);
+    richEditor.current?.state.doc.descendants((node) => {
+      if (node.type.name === "image" && node.attrs.uploadId) names.add(String(node.attrs.alt ?? ""));
+    });
+    return names;
+  }
+
+  function onImageFile(img: PastedImage) {
+    const name = uniqueFilename(img.file, attachmentNames());
+    const pending: PendingImage = { ...img, name };
+    updateImage(img.uploadId, (attrs) => ({ ...attrs, alt: name }));
+    if (mode.kind === "edit") void uploadImage(mode.key, pending);
+    else pendingImages.current.push(pending);
+  }
+
+  /** Rewrites the placeholder node's attrs, or deletes it when `next` returns null. */
+  function updateImage(uploadId: string, next: (attrs: Record<string, unknown>) => Record<string, unknown> | null) {
+    const editor = richEditor.current;
+    if (!editor) return;
+    editor.state.doc.descendants((node, pos) => {
+      if (node.type.name !== "image" || node.attrs.uploadId !== uploadId) return;
+      const tr = editor.state.tr.setMeta("addToHistory", false);
+      const attrs = next(node.attrs);
+      if (attrs) tr.setNodeMarkup(pos, undefined, attrs);
+      else tr.delete(pos, pos + node.nodeSize);
+      editor.view.dispatch(tr);
+      return false;
+    });
+  }
+
+  /** Swaps the placeholder for the attachment Jira created (or drops it on failure). */
+  function settleImage(uploadId: string, content: string | null) {
+    updateImage(uploadId, (attrs) => (content ? { ...attrs, src: toAssetUrl(content, baseUrl) ?? content, origSrc: content, uploadId: null } : null));
+  }
+
+  async function uploadImage(issueKey: string, img: PendingImage) {
+    setUploading((n) => n + 1);
+    try {
+      const [att] = await api.addAttachment(issueKey, img.file, img.name);
+      settleImage(img.uploadId, att?.content ?? null);
+      if (!att) throw new Error("Jira returned no attachment");
+    } catch (e) {
+      settleImage(img.uploadId, null);
+      app.notify(`Image upload failed: ${errorMessage(e)}`, "error");
+    } finally {
+      URL.revokeObjectURL(img.src);
+      setUploading((n) => n - 1);
+    }
+  }
+
+  /** Create mode: attach the queued images to the issue that now exists. */
+  async function uploadPending(issueKey: string) {
+    const queue = pendingImages.current.splice(0);
+    const failed: string[] = [];
+    for (const img of queue) {
+      try {
+        await api.addAttachment(issueKey, img.file, img.name);
+      } catch (e) {
+        failed.push(`${img.name} (${errorMessage(e)})`);
+      } finally {
+        URL.revokeObjectURL(img.src);
+      }
+    }
+    if (failed.length) app.notify(`${issueKey}: could not attach ${failed.join(", ")}`, "error");
+  }
+
   // ---- render --------------------------------------------------------------
   return (
     <div className={`${css.editor} ${fieldsOpen ? css.fieldsOpen : ""}`}>
@@ -520,8 +638,8 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
         <button className="ghost" onClick={cancel} disabled={saving}>
           Cancel
         </button>
-        <button className="primary" onClick={() => void save()} disabled={saving || loading || (!isCreate && !dirty)} title="Save (Ctrl+S)">
-          {(saving || (isCreate && metaLoading)) && <span className="spin"></span>}
+        <button className="primary" onClick={() => void save()} disabled={saving || loading || (!isCreate && !dirty)} title={uploading ? "Uploading image…" : "Save (Ctrl+S)"}>
+          {(saving || uploading > 0 || (isCreate && metaLoading)) && <span className="spin"></span>}
           {isCreate ? "Create" : "Save"}
         </button>
       </header>
@@ -743,6 +861,7 @@ export default function IssueEditor({ mode }: { mode: EditorMode }) {
                   editorRef={richEditor}
                   onChange={onRichChange}
                   onImageClick={openImage}
+                  onImageFile={onImageFile}
                 />
               ) : (
                 <textarea

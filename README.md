@@ -60,6 +60,9 @@ description and comments should get the whole screen.
   panels, macros…) triggers a warning; `Ctrl+P` switches to editing the raw
   wiki markup verbatim. `Ctrl+S` saves; `Esc` cancels (asks before discarding
   changes).
+- **Paste or drop an image** into the description: it is uploaded as an
+  attachment of the issue (right away, or just after *Create* for a new issue)
+  and referenced as `!name.png!` in the markup.
 - Images in descriptions, comments and attachments open in a fullscreen
   lightbox (click; zoom with `+`/`-`/`0`/`1`, `←`/`→` between images).
 

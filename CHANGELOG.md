@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Pasted/dropped images upload as issue attachments instead of dead local URLs.
+
 ## 0.2.0 — 2026-09-29
 
 - Faster list/board search typing: rows and cards only re-render when they change.

@@ -104,6 +104,11 @@ function emoticonName(url: string): string | null {
   return m ? m[1] : null;
 }
 
+/** `blob:`/`data:` URLs and anything served by the webview itself (`tauri://`, `jira-asset://`). */
+function isLocalUrl(url: string): boolean {
+  return /^(?:blob:|data:|tauri:|https?:\/\/tauri\.localhost|jira-asset:|https?:\/\/jira-asset\.localhost)/i.test(url);
+}
+
 function origSrc(img: HTMLImageElement): string {
   return img.getAttribute("data-orig-src") ?? img.getAttribute("src") ?? "";
 }
@@ -202,6 +207,11 @@ function inline(node: Node, ctx: Ctx): string {
       }
       const name = attachmentName(src);
       if (name) return `!${name}!`;
+      // Pasted images are attached under their alt name; local webview URLs never reach Jira.
+      if (isLocalUrl(src)) {
+        const pending = img.getAttribute("alt")?.trim();
+        return pending && img.hasAttribute("data-upload-id") ? `!${pending}!` : "";
+      }
       return src ? `!${src}!` : "";
     }
     case "A": {

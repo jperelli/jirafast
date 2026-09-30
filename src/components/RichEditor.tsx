@@ -1,12 +1,17 @@
-import { useEffect, type CSSProperties, type RefObject } from "react";
-import { EditorContent, useEditor, useEditorState, type Editor } from "@tiptap/react";
+import { useEffect, useRef, type CSSProperties, type RefObject } from "react";
+import { EditorContent, Extension, useEditor, useEditorState, type Editor } from "@tiptap/react";
 import StarterKit from "@tiptap/starter-kit";
 import Image from "@tiptap/extension-image";
 import { TableKit } from "@tiptap/extension-table";
 import { Placeholder } from "@tiptap/extensions";
+import { Plugin, TextSelection } from "@tiptap/pm/state";
+import type { EditorView } from "@tiptap/pm/view";
 import css from "./RichEditor.module.css";
 
-/** Keeps Jira's original image URL so the markup converter can name the attachment. */
+/**
+ * Keeps Jira's original image URL so the markup converter can name the
+ * attachment, and marks images whose upload is still in flight.
+ */
 const JiraImage = Image.extend({
   addAttributes() {
     return {
@@ -16,9 +21,110 @@ const JiraImage = Image.extend({
         parseHTML: (el: HTMLElement) => el.getAttribute("data-orig-src"),
         renderHTML: (attrs: { origSrc?: string | null }) => (attrs.origSrc ? { "data-orig-src": attrs.origSrc } : {}),
       },
+      uploadId: {
+        default: null,
+        parseHTML: (el: HTMLElement) => el.getAttribute("data-upload-id"),
+        renderHTML: (attrs: { uploadId?: string | null }) => (attrs.uploadId ? { "data-upload-id": attrs.uploadId } : {}),
+      },
     };
   },
 }).configure({ inline: true, allowBase64: false });
+
+/** An image the user pasted or dropped; shown from `src` until it is attached to the issue. */
+export interface PastedImage {
+  uploadId: string;
+  file: File;
+  src: string;
+}
+
+function imageFiles(list: FileList | DataTransferItemList | null | undefined): File[] {
+  if (!list) return [];
+  const out: File[] = [];
+  for (let i = 0; i < list.length; i++) {
+    const item: File | DataTransferItem = list[i];
+    const file = item instanceof File ? item : item.kind === "file" ? item.getAsFile() : null;
+    if (file && file.type.startsWith("image/")) out.push(file);
+  }
+  return out;
+}
+
+const newUploadId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+const isBlobUrl = (src: unknown): src is string => typeof src === "string" && /^blob:/i.test(src);
+
+interface PastedImagesOptions {
+  onImage: (img: PastedImage) => void;
+}
+
+/**
+ * Routes pasted/dropped images to `onImage`. Chromium hands the files over in
+ * the paste/drop event; WebKit (Linux, macOS) exposes nothing there and instead
+ * lets the default paste insert `<img src="blob:…">`, so any unclaimed `blob:`
+ * image that appears in the document is tagged with an upload id and read back
+ * through `fetch`. Either way Jira never sees the local URL.
+ */
+const PastedImages = Extension.create<PastedImagesOptions>({
+  name: "pastedImages",
+
+  addOptions() {
+    return { onImage: () => {} };
+  },
+
+  addProseMirrorPlugins() {
+    const onImage = (img: PastedImage) => this.options.onImage(img);
+    const insertFiles = (view: EditorView, files: File[]) => {
+      const type = view.state.schema.nodes.image;
+      const tr = view.state.tr;
+      const pending: PastedImage[] = [];
+      for (const file of files) {
+        const uploadId = newUploadId();
+        const src = URL.createObjectURL(file);
+        tr.replaceSelectionWith(type.create({ src, uploadId }));
+        pending.push({ uploadId, file, src });
+      }
+      view.dispatch(tr.scrollIntoView());
+      pending.forEach(onImage);
+    };
+    return [
+      new Plugin({
+        props: {
+          handlePaste: (view, e) => {
+            const files = imageFiles(e.clipboardData?.files);
+            if (!files.length) return false;
+            insertFiles(view, files);
+            return true;
+          },
+          handleDrop: (view, e, _slice, moved) => {
+            const files = imageFiles(e.dataTransfer?.files);
+            if (moved || !files.length) return false;
+            const pos = view.posAtCoords({ left: e.clientX, top: e.clientY });
+            if (pos) view.dispatch(view.state.tr.setSelection(TextSelection.near(view.state.doc.resolve(pos.pos))));
+            insertFiles(view, files);
+            return true;
+          },
+        },
+        appendTransaction: (trs, _old, state) => {
+          if (!trs.some((tr) => tr.docChanged)) return null;
+          const claimed: { pos: number; src: string; uploadId: string }[] = [];
+          state.doc.descendants((node, pos) => {
+            if (node.type.name === "image" && !node.attrs.uploadId && !node.attrs.origSrc && isBlobUrl(node.attrs.src)) {
+              claimed.push({ pos, src: node.attrs.src, uploadId: newUploadId() });
+            }
+          });
+          if (!claimed.length) return null;
+          const tr = state.tr;
+          for (const c of claimed) tr.setNodeMarkup(c.pos, undefined, { ...state.doc.nodeAt(c.pos)!.attrs, uploadId: c.uploadId });
+          for (const c of claimed) {
+            void fetch(c.src)
+              .then((r) => r.blob())
+              .then((blob) => onImage({ uploadId: c.uploadId, file: new File([blob], "", { type: blob.type }), src: c.src }));
+          }
+          return tr;
+        },
+      }),
+    ];
+  },
+});
 
 const extensions = [
   StarterKit.configure({
@@ -40,15 +146,19 @@ export interface RichEditorProps {
   /** Always points at the live editor instance (or null while unmounted). */
   editorRef?: RefObject<Editor | null>;
   onImageClick?: (src: string, alt: string) => void;
+  /** Called for every pasted/dropped image; the caller attaches it to the issue. */
+  onImageFile?: (img: PastedImage) => void;
   fontSize: number;
   disabled?: boolean;
   autoFocus?: boolean;
 }
 
-export default function RichEditor({ html, contentKey, onChange, onReady, editorRef, onImageClick, fontSize, disabled, autoFocus }: RichEditorProps) {
+export default function RichEditor({ html, contentKey, onChange, onReady, editorRef, onImageClick, onImageFile, fontSize, disabled, autoFocus }: RichEditorProps) {
+  const imageFileRef = useRef(onImageFile);
+  imageFileRef.current = onImageFile;
   const editor = useEditor(
     {
-      extensions,
+      extensions: [...extensions, PastedImages.configure({ onImage: (img) => imageFileRef.current?.(img) })],
       content: html,
       editable: !disabled,
       autofocus: autoFocus ? "start" : false,

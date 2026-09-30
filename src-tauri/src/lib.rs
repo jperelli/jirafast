@@ -285,6 +285,44 @@ async fn add_comment(state: State<'_, AppState>, key: String, body: String) -> R
     Ok(res)
 }
 
+/// Uploads one attachment. The file bytes travel as the raw IPC body (no JSON
+/// encoding of megabytes of pixels); issue key, file name and content type
+/// come in request headers. Returns Jira's `[attachment]` array.
+#[tauri::command]
+async fn add_attachment(
+    state: State<'_, AppState>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<Value> {
+    let header = |name: &str| -> Result<String> {
+        let raw = request
+            .headers()
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .ok_or_else(|| JiraError::Decode(format!("missing {name} header")))?;
+        percent_decode(raw)
+    };
+    let key = header("x-issue-key")?;
+    let filename = header("x-file-name")?;
+    let content_type = header("x-content-type")?;
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err(JiraError::Decode("attachment body must be binary".into()));
+    };
+    let client = state.client()?;
+    let res = client
+        .add_attachment(&key, &filename, &content_type, bytes.clone())
+        .await?;
+    refresh_issue(&state, &client, &key).await;
+    Ok(res)
+}
+
+/// Header values are ASCII, so the frontend `encodeURIComponent`s them.
+fn percent_decode(s: &str) -> Result<String> {
+    percent_encoding::percent_decode_str(s)
+        .decode_utf8()
+        .map(|c| c.into_owned())
+        .map_err(|e| JiraError::Decode(e.to_string()))
+}
+
 #[tauri::command]
 async fn update_issue(state: State<'_, AppState>, key: String, fields: Value) -> Result<Value> {
     let client = state.client()?;
@@ -624,6 +662,7 @@ pub fn run() {
             get_issue,
             prefetch_issues,
             add_comment,
+            add_attachment,
             update_issue,
             create_issue,
             get_edit_meta,
