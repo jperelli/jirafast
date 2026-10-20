@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Transitions Jira refuses for missing fields (a required Resolution on the transition screen, a "Story Points is required." validator, …) open a dialog with just those fields and a "Save and move to …" button, instead of an error toast.
 - Pasted/dropped images upload as issue attachments instead of dead local URLs.
 
 ## 0.2.0 — 2026-09-29

@@ -389,10 +389,11 @@ async fn do_transition(
     key: String,
     transition_id: String,
     comment: Option<String>,
+    fields: Option<Value>,
 ) -> Result<Value> {
     let client = state.client()?;
     client
-        .do_transition(&key, &transition_id, comment.as_deref())
+        .do_transition(&key, &transition_id, comment.as_deref(), fields.as_ref())
         .await?;
     Ok(refresh_issue(&state, &client, &key)
         .await

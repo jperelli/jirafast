@@ -6,6 +6,7 @@ use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, AUTHORIZATION, CONTENT_TYP
 use reqwest::{Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -42,7 +43,14 @@ pub enum JiraError {
     #[error("network error: {0}")]
     Network(String),
     #[error("Jira returned HTTP {status}: {message}")]
-    Http { status: u16, message: String },
+    Http {
+        status: u16,
+        message: String,
+        /// Jira's per-field errors (`{"errors": {"customfield_10016": "Story Points is required."}}`).
+        errors: BTreeMap<String, String>,
+        /// Jira's field-less messages (`{"errorMessages": ["..."]}`), e.g. workflow validators.
+        error_messages: Vec<String>,
+    },
     #[error("unexpected response: {0}")]
     Decode(String),
     #[error("not connected to a Jira instance")]
@@ -67,9 +75,54 @@ impl From<reqwest::Error> for JiraError {
     }
 }
 
+impl JiraError {
+    /// HTTP error from a Jira response body, keeping the structured
+    /// `errors` / `errorMessages` so the UI can offer to fix the fields.
+    fn http(status: StatusCode, body: &str) -> Self {
+        let parsed = parse_error_body(body);
+        JiraError::Http {
+            status: status.as_u16(),
+            message: error_message(&parsed, status),
+            errors: parsed.errors,
+            error_messages: parsed.error_messages,
+        }
+    }
+
+    fn http_message(status: StatusCode, message: String) -> Self {
+        JiraError::Http {
+            status: status.as_u16(),
+            message,
+            errors: BTreeMap::new(),
+            error_messages: Vec::new(),
+        }
+    }
+}
+
+/// Sent to the webview as `{ message, status?, errors?, errorMessages? }`;
+/// `errorMessage()` in `src/lib/api.ts` reads `message`.
 impl Serialize for JiraError {
     fn serialize<S: serde::Serializer>(&self, s: S) -> std::result::Result<S::Ok, S::Error> {
-        s.serialize_str(&self.to_string())
+        use serde::ser::SerializeStruct;
+        match self {
+            JiraError::Http {
+                status,
+                errors,
+                error_messages,
+                ..
+            } => {
+                let mut st = s.serialize_struct("JiraError", 4)?;
+                st.serialize_field("message", &self.to_string())?;
+                st.serialize_field("status", status)?;
+                st.serialize_field("errors", errors)?;
+                st.serialize_field("errorMessages", error_messages)?;
+                st.end()
+            }
+            _ => {
+                let mut st = s.serialize_struct("JiraError", 1)?;
+                st.serialize_field("message", &self.to_string())?;
+                st.end()
+            }
+        }
     }
 }
 
@@ -156,10 +209,7 @@ impl JiraClient {
         }
         let text = resp.text().await?;
         if !status.is_success() {
-            return Err(JiraError::Http {
-                status: status.as_u16(),
-                message: extract_error_message(&text, status),
-            });
+            return Err(JiraError::http(status, &text));
         }
         if text.trim().is_empty() {
             return Ok(Value::Null);
@@ -330,10 +380,7 @@ impl JiraClient {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            return Err(JiraError::Http {
-                status: status.as_u16(),
-                message: extract_error_message(&text, status),
-            });
+            return Err(JiraError::http(status, &text));
         }
         Ok(text)
     }
@@ -361,10 +408,7 @@ impl JiraClient {
         let status = resp.status();
         let text = resp.text().await?;
         if !status.is_success() {
-            return Err(JiraError::Http {
-                status: status.as_u16(),
-                message: extract_error_message(&text, status),
-            });
+            return Err(JiraError::http(status, &text));
         }
         serde_json::from_str(&text).map_err(|e| JiraError::Decode(e.to_string()))
     }
@@ -377,21 +421,26 @@ impl JiraClient {
         self.post(url, &serde_json::json!({ "body": body })).await
     }
 
+    /// Available transitions with the fields of each transition screen
+    /// (`expand=transitions.fields`, same shape as `editmeta`).
     pub async fn transitions(&self, key: &str) -> Result<Value> {
-        self.get(self.api(&format!("issue/{}/transitions", key)))
-            .await
+        let url = format!(
+            "{}?expand=transitions.fields",
+            self.api(&format!("issue/{}/transitions", key))
+        );
+        self.get(url).await
     }
 
+    /// `POST /issue/{key}/transitions`; `fields` are the transition-screen
+    /// values set in the same request (Jira rejects fields not on that screen).
     pub async fn do_transition(
         &self,
         key: &str,
         transition_id: &str,
         comment: Option<&str>,
+        fields: Option<&Value>,
     ) -> Result<Value> {
-        let mut body = serde_json::json!({ "transition": { "id": transition_id } });
-        if let Some(c) = comment.filter(|c| !c.trim().is_empty()) {
-            body["update"] = serde_json::json!({ "comment": [{ "add": { "body": c } }] });
-        }
+        let body = transition_body(transition_id, comment, fields);
         self.post(self.api(&format!("issue/{}/transitions", key)), &body)
             .await
     }
@@ -659,10 +708,10 @@ impl JiraClient {
         let resp = self.http.get(&url).header(ACCEPT, "*/*").send().await?;
         let status = resp.status();
         if !status.is_success() {
-            return Err(JiraError::Http {
-                status: status.as_u16(),
-                message: format!("asset {path_and_query}"),
-            });
+            return Err(JiraError::http_message(
+                status,
+                format!("asset {path_and_query}"),
+            ));
         }
         let content_type = resp
             .headers()
@@ -693,24 +742,37 @@ fn normalize_base_url(input: &str) -> Result<String> {
     Ok(s)
 }
 
-fn extract_error_message(text: &str, status: StatusCode) -> String {
+#[derive(Debug, Default)]
+struct ErrorBody {
+    error_messages: Vec<String>,
+    errors: BTreeMap<String, String>,
+    message: Option<String>,
+}
+
+fn parse_error_body(text: &str) -> ErrorBody {
+    let mut out = ErrorBody::default();
     if let Ok(v) = serde_json::from_str::<Value>(text) {
-        let mut parts: Vec<String> = Vec::new();
         if let Some(arr) = v.get("errorMessages").and_then(Value::as_array) {
-            parts.extend(arr.iter().filter_map(Value::as_str).map(String::from));
+            out.error_messages
+                .extend(arr.iter().filter_map(Value::as_str).map(String::from));
         }
         if let Some(obj) = v.get("errors").and_then(Value::as_object) {
-            parts.extend(
+            out.errors.extend(
                 obj.iter()
-                    .map(|(k, v)| format!("{k}: {}", v.as_str().unwrap_or(""))),
+                    .map(|(k, v)| (k.clone(), v.as_str().unwrap_or("").to_string())),
             );
         }
-        if let Some(m) = v.get("message").and_then(Value::as_str) {
-            parts.push(m.to_string());
-        }
-        if !parts.is_empty() {
-            return parts.join("; ");
-        }
+        out.message = v.get("message").and_then(Value::as_str).map(String::from);
+    }
+    out
+}
+
+fn error_message(body: &ErrorBody, status: StatusCode) -> String {
+    let mut parts: Vec<String> = body.error_messages.clone();
+    parts.extend(body.errors.iter().map(|(k, v)| format!("{k}: {v}")));
+    parts.extend(body.message.clone());
+    if !parts.is_empty() {
+        return parts.join("; ");
     }
     match status {
         StatusCode::UNAUTHORIZED => "authentication failed (check token / password)".into(),
@@ -718,6 +780,22 @@ fn extract_error_message(text: &str, status: StatusCode) -> String {
         StatusCode::NOT_FOUND => "not found (check the base URL includes the context path, e.g. https://host/jira)".into(),
         _ => status.canonical_reason().unwrap_or("error").to_string(),
     }
+}
+
+#[cfg(test)]
+fn extract_error_message(text: &str, status: StatusCode) -> String {
+    error_message(&parse_error_body(text), status)
+}
+
+fn transition_body(transition_id: &str, comment: Option<&str>, fields: Option<&Value>) -> Value {
+    let mut body = serde_json::json!({ "transition": { "id": transition_id } });
+    if let Some(f) = fields.filter(|f| f.as_object().is_some_and(|o| !o.is_empty())) {
+        body["fields"] = f.clone();
+    }
+    if let Some(c) = comment.filter(|c| !c.trim().is_empty()) {
+        body["update"] = serde_json::json!({ "comment": [{ "add": { "body": c } }] });
+    }
+    body
 }
 
 fn urlencode(s: &str) -> String {
@@ -750,6 +828,51 @@ mod tests {
         assert_eq!(msg, "Issue Does Not Exist");
         let msg = extract_error_message("", StatusCode::UNAUTHORIZED);
         assert!(msg.contains("authentication failed"));
+    }
+
+    #[test]
+    fn http_error_keeps_field_errors() {
+        let e = JiraError::http(
+            StatusCode::BAD_REQUEST,
+            r#"{"errorMessages":["Story Points is required."],"errors":{"resolution":"Resolution is required."}}"#,
+        );
+        let JiraError::Http {
+            status,
+            message,
+            errors,
+            error_messages,
+        } = &e
+        else {
+            panic!("expected Http");
+        };
+        assert_eq!(*status, 400);
+        assert_eq!(
+            message,
+            "Story Points is required.; resolution: Resolution is required."
+        );
+        assert_eq!(errors["resolution"], "Resolution is required.");
+        assert_eq!(error_messages, &["Story Points is required."]);
+        let json = serde_json::to_value(&e).unwrap();
+        assert_eq!(json["status"], 400);
+        assert_eq!(json["errors"]["resolution"], "Resolution is required.");
+        assert_eq!(json["errorMessages"][0], "Story Points is required.");
+        assert!(json["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Jira returned HTTP 400"));
+    }
+
+    #[test]
+    fn transition_body_includes_fields() {
+        let fields = serde_json::json!({ "resolution": { "id": "10000" } });
+        let body = transition_body("41", Some("done"), Some(&fields));
+        assert_eq!(body["transition"]["id"], "41");
+        assert_eq!(body["fields"]["resolution"]["id"], "10000");
+        assert_eq!(body["update"]["comment"][0]["add"]["body"], "done");
+        let empty = serde_json::json!({});
+        let body = transition_body("41", None, Some(&empty));
+        assert!(body.get("fields").is_none());
+        assert!(body.get("update").is_none());
     }
 
     #[test]

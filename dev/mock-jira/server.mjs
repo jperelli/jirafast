@@ -177,7 +177,7 @@ function mkIssue({ proj, type, summary, status, priority, assignee, reporter, la
       watches: { self: `${BASE}/rest/api/2/issue/${key}/watchers`, watchCount: 2, isWatching: n % 2 === 0 },
       votes: { self: `${BASE}/rest/api/2/issue/${key}/votes`, votes: 0, hasVoted: false },
       timetracking: n % 3 === 0 ? { originalEstimate: "2d", remainingEstimate: "1d 4h", timeSpent: "4h" } : {},
-      customfield_10016: n % 2 ? 3 : 5, // story points
+      customfield_10016: n % 3 === 0 ? null : n % 2 ? 3 : 5, // story points (missing on every third issue: "Send to Review" refuses those)
       customfield_10100: pick([null, CUSTOM_OPTIONS.severity[0], CUSTOM_OPTIONS.severity[1]], n), // single select
       customfield_10101: n % 2 ? [CUSTOM_OPTIONS.platform[0], CUSTOM_OPTIONS.platform[2]] : [], // multi checkboxes
       customfield_10102: n % 3 === 0 ? "Reproduced on staging with the *default* config." : null, // textarea
@@ -503,15 +503,48 @@ function mkBoard(id, name, type, proj, columns, opts = {}) {
 
 // ---- transitions -----------------------------------------------------------
 
-function transitionsFor(issue) {
+const resolutions = [
+  { id: "10000", name: "Done", description: "Work has been completed on this issue." },
+  { id: "10001", name: "Won't Do", description: "This issue won't be actioned." },
+  { id: "10002", name: "Duplicate", description: "The problem is a duplicate of an existing issue." },
+];
+
+// Like a real workflow: "Done" has a transition screen with a required
+// Resolution (+ optional Story Points / Fix Version/s); "Send to Review" has no
+// screen but a validator that refuses issues without Story Points; "Start
+// Progress" has a validator that refuses unassigned issues (field-keyed error).
+function transitionsFor(issue, { withFields = false } = {}) {
   const cur = issue.fields.status;
+  const proj = issue.fields.project;
   const all = [
-    { id: "11", name: "To Do", to: statuses.todo },
-    { id: "21", name: "Start Progress", to: statuses.progress },
-    { id: "31", name: "Send to Review", to: statuses.review },
-    { id: "41", name: "Done", to: statuses.done },
+    { id: "11", name: "To Do", to: statuses.todo, screen: null },
+    { id: "21", name: "Start Progress", to: statuses.progress, screen: null },
+    { id: "31", name: "Send to Review", to: statuses.review, screen: null },
+    {
+      id: "41",
+      name: "Done",
+      to: statuses.done,
+      screen: () => {
+        const m = fieldMeta(proj);
+        return {
+          resolution: { required: true, schema: { type: "resolution", system: "resolution" }, name: "Resolution", operations: ["set"], allowedValues: resolutions },
+          customfield_10016: m.customfield_10016,
+          fixVersions: m.fixVersions,
+        };
+      },
+    },
   ];
-  return all.filter((t) => t.to !== cur).map((t) => ({ ...t, hasScreen: false, isGlobal: true, isInitial: false, fields: {} }));
+  return all
+    .filter((t) => t.to !== cur)
+    .map(({ screen, ...t }) => ({ ...t, hasScreen: !!screen, isGlobal: true, isInitial: false, ...(withFields ? { fields: screen ? screen() : {} } : {}) }));
+}
+
+// Validators run after the screen fields are applied to a draft; `null` means the transition may proceed.
+function transitionErrors(t, draft) {
+  if (t.id === "41" && !draft.fields.resolution) return { errorMessages: [], errors: { resolution: "Resolution is required." } };
+  if (t.id === "31" && draft.fields.customfield_10016 == null) return { errorMessages: ["Story Points is required."], errors: {} };
+  if (t.id === "21" && !draft.fields.assignee) return { errorMessages: [], errors: { assignee: "Assignee is required." } };
+  return null;
 }
 
 // ---- JQL (tiny subset) -----------------------------------------------------
@@ -685,6 +718,12 @@ function applyFields(issue, fields, { creating = false } = {}) {
       case "timetracking":
         issue.fields.timetracking = { ...issue.fields.timetracking, ...(value ?? {}) };
         break;
+      case "resolution": {
+        const r = value && resolutions.find((x) => x.id === String(value.id) || x.name === value.name);
+        if (!r) errors.resolution = "Resolution is not valid.";
+        else issue.fields.resolution = r;
+        break;
+      }
       case "customfield_10016":
         if (value != null && typeof value !== "number") errors[name] = "Number value expected as 'Story Points'.";
         else issue.fields[name] = value ?? null;
@@ -1140,14 +1179,32 @@ const server = http.createServer(async (req, res) => {
         issue.fields.updated = daysAgoIso(0);
         return json(res, 201, { ...c, renderedBody: renderWiki(c.body) });
       }
-      if (sub === "transitions" && req.method === "GET") return json(res, 200, { expand: "transitions", transitions: transitionsFor(issue) });
+      if (sub === "transitions" && req.method === "GET") {
+        const withFields = (url.searchParams.get("expand") ?? "").split(",").includes("transitions.fields");
+        return json(res, 200, { expand: "transitions", transitions: transitionsFor(issue, { withFields }) });
+      }
       if (sub === "transitions" && req.method === "POST") {
         const body = await readBody(req);
-        const t = transitionsFor(issue).find((x) => x.id === String(body.transition?.id));
+        const t = transitionsFor(issue, { withFields: true }).find((x) => x.id === String(body.transition?.id));
         if (!t) return jiraError(res, 400, "It seems that you have tried to perform an illegal workflow operation.");
+        const draft = structuredClone(issue);
+        const errors = {};
+        for (const name of Object.keys(body.fields ?? {})) {
+          if (!(name in t.fields)) errors[name] = `Field '${name}' cannot be set. It is not on the appropriate screen, or unknown.`;
+        }
+        Object.assign(errors, applyFields(draft, Object.fromEntries(Object.entries(body.fields ?? {}).filter(([n]) => n in t.fields))));
+        if (Object.keys(errors).length) return json(res, 400, { errorMessages: [], errors });
+        const refused = transitionErrors(t, draft);
+        if (refused) return json(res, 400, refused);
+        issue.fields = draft.fields;
         issue.fields.status = t.to;
-        issue.fields.resolution = t.to === statuses.done ? { id: "10000", name: "Done" } : null;
-        issue.fields.resolutiondate = t.to === statuses.done ? daysAgoIso(0) : null;
+        if (t.to === statuses.done) {
+          issue.fields.resolution ??= resolutions[0];
+          issue.fields.resolutiondate = daysAgoIso(0);
+        } else {
+          issue.fields.resolution = null;
+          issue.fields.resolutiondate = null;
+        }
         issue.fields.updated = daysAgoIso(0);
         const add = body.update?.comment?.[0]?.add?.body;
         if (add) issue.fields.comment.comments.push(mkComment(ME, add, 0));

@@ -1,0 +1,83 @@
+.backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(9, 30, 66, 0.4);
+  display: grid;
+  place-items: center;
+  z-index: 50;
+}
+.dialog {
+  background: var(--bg);
+  border-radius: 8px;
+  box-shadow: var(--shadow);
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  outline: none;
+}
+.header {
+  padding: 16px 20px 0;
+}
+.header h2 {
+  margin: 0 0 2px;
+  font-size: 16px;
+}
+.header .sub {
+  font-size: 12px;
+}
+.errors {
+  margin: 12px 20px 0;
+  padding: 8px 12px;
+  border-radius: var(--radius);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: 13px;
+}
+.errors ul {
+  margin: 0;
+  padding-left: 18px;
+}
+.hint {
+  margin: 12px 20px 0;
+  font-size: 13px;
+}
+.form {
+  width: auto !important;
+  border-right: 0 !important;
+  background: transparent !important;
+  padding: 14px 20px 4px !important;
+  overflow-y: auto;
+  flex: 1;
+}
+.fieldError {
+  color: var(--danger);
+  font-size: 12px;
+}
+.more {
+  align-self: flex-start;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--accent);
+  font-size: 12px;
+}
+.more:hover {
+  text-decoration: underline;
+  filter: none;
+}
+.footer {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 20px 16px;
+}
+.footer .grow {
+  flex: 1;
+  font-size: 12px;
+}
+
+.form .hint {
+  margin: 0;
+}

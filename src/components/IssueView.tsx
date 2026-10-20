@@ -2,14 +2,15 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from "react";
 import { openUrl } from "@tauri-apps/plugin-opener";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import { app, useApp, useAppShallow, useBaseUrl } from "../lib/store";
-import { api, errorMessage } from "../lib/api";
+import { api, errorMessage, jiraErrorInfo } from "../lib/api";
 import { absoluteTime, formatBytes, relativeTime } from "../lib/format";
 import { toAssetUrl, toJiraUrl } from "../lib/html";
 import { writeClipboardHtml, writeClipboardText } from "../lib/clipboard";
-import type { Attachment, Comment, LinkedIssue, Transition } from "../lib/types";
+import type { Attachment, Comment, JiraErrorInfo, LinkedIssue, Transition } from "../lib/types";
 import Avatar from "./Avatar";
 import JiraHtml from "./JiraHtml";
 import CommentBox from "./CommentBox";
+import TransitionDialog from "./TransitionDialog";
 import css from "./IssueView.module.css";
 
 function escapePlain(s: string): string {
@@ -69,6 +70,8 @@ export default function IssueView() {
     }
   }
   const [transitioning, setTransitioning] = useState(false);
+  /** Transition waiting for fields: shown up front for screens, or after Jira refused it. */
+  const [pending, setPending] = useState<{ transition: Transition; error: JiraErrorInfo | null } | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
 
   const comments = useMemo((): Array<{ c: Comment; html: string }> => {
@@ -110,13 +113,22 @@ export default function IssueView() {
     const id = select.value;
     select.value = "";
     if (!id || !issue) return;
+    const t = transitions.find((x) => x.id === id);
+    if (!t) return;
+    if (t.hasScreen) {
+      setPending({ transition: t, error: null });
+      return;
+    }
     setTransitioning(true);
     try {
       const updated = await api.doTransition(issue.key, id);
       app.applyIssue(updated);
       app.notify("Status updated");
     } catch (err) {
-      app.notify(errorMessage(err), "error");
+      const info = jiraErrorInfo(err);
+      // 400 with field errors or validator messages: ask for the fields instead of just failing.
+      if (info.status === 400 && (Object.keys(info.errors).length > 0 || info.errorMessages.length > 0)) setPending({ transition: t, error: info });
+      else app.notify(info.message, "error");
     } finally {
       setTransitioning(false);
     }
@@ -507,6 +519,21 @@ export default function IssueView() {
             )}
           </div>
         </>
+      )}
+      {pending && issue && (
+        <TransitionDialog
+          issue={issue}
+          transition={pending.transition}
+          error={pending.error}
+          me={me}
+          onClose={() => setPending(null)}
+          onSaved={(updated) => app.applyIssue(updated)}
+          onDone={(updated) => {
+            setPending(null);
+            app.applyIssue(updated);
+            app.notify(`Moved to ${pending.transition.to?.name ?? pending.transition.name}`);
+          }}
+        />
       )}
     </section>
   );

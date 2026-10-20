@@ -13,6 +13,7 @@ import type {
   Issue,
   IssueFieldsInput,
   IssuePick,
+  JiraErrorInfo,
   JiraUser,
   Project,
   PublicSettings,
@@ -58,8 +59,8 @@ export const api = {
   renderWiki: (markup: string, issueKey?: string) =>
     invoke<string>("render_wiki", { markup, issueKey: issueKey ?? null }),
   getTransitions: (key: string) => invoke<{ transitions: Transition[] }>("get_transitions", { key }),
-  doTransition: (key: string, transitionId: string, comment?: string) =>
-    invoke<Issue | null>("do_transition", { key, transitionId, comment: comment ?? null }),
+  doTransition: (key: string, transitionId: string, comment?: string, fields?: IssueFieldsInput) =>
+    invoke<Issue | null>("do_transition", { key, transitionId, comment: comment ?? null, fields: fields ?? null }),
   assignIssue: (key: string, username: string | null) =>
     invoke<Issue | null>("assign_issue", { key, username }),
 
@@ -125,9 +126,25 @@ export async function swr<T>(
 export function errorMessage(e: unknown): string {
   if (typeof e === "string") return e;
   if (e instanceof Error) return e.message;
+  if (e && typeof e === "object" && typeof (e as { message?: unknown }).message === "string") return (e as { message: string }).message;
   try {
     return JSON.stringify(e);
   } catch {
     return String(e);
   }
+}
+
+/** Structured view of any thrown value; Jira's field errors survive only for backend `JiraError`s. */
+export function jiraErrorInfo(e: unknown): JiraErrorInfo {
+  const o = (e && typeof e === "object" ? e : {}) as Partial<JiraErrorInfo>;
+  const errors: Record<string, string> = {};
+  if (o.errors && typeof o.errors === "object") {
+    for (const [k, v] of Object.entries(o.errors)) errors[k] = typeof v === "string" ? v : String(v);
+  }
+  return {
+    message: errorMessage(e),
+    status: typeof o.status === "number" ? o.status : undefined,
+    errors,
+    errorMessages: Array.isArray(o.errorMessages) ? o.errorMessages.filter((m): m is string => typeof m === "string") : [],
+  };
 }

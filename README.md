@@ -103,6 +103,10 @@ the issue when the query is an issue key or leaves a single match; `Esc` clears.
 - Issue view: status + transitions, assignee (+ assign to me), reporter,
   priority, type, labels, components, fix versions, due date, description,
   environment, attachments, subtasks, linked issues, comments.
+- Transitions with a screen (or refused by a workflow validator such as
+  "Story Points is required.") open a dialog with just the fields Jira asks
+  for and a "Save and move to …" button: screen fields travel in the
+  transition request, other fields are saved on the issue first.
 - Issue links inside descriptions/comments open in the app; other links open in
   your browser.
 - Window size/position remembered between runs.
@@ -157,7 +161,10 @@ secret. *Sign out* deletes them.
 with ~40 issues (one with a long description and 60 comments), rendered fields,
 transitions, comments, assignment, favourite filters and avatar/attachment
 assets. It serves under a `/jira` context path with an artificial 250 ms
-latency so cache hits are noticeable.
+latency so cache hits are noticeable. Its workflow refuses some transitions
+like a real one: "Done" has a screen with a required Resolution, "Send to
+Review" needs Story Points (missing on every third issue), "Start Progress"
+needs an assignee.
 
 ```bash
 npm run mock-jira                 # http://127.0.0.1:8080/jira

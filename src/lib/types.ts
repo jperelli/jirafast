@@ -177,6 +177,18 @@ export interface Transition {
   name: string;
   to?: Status;
   hasScreen?: boolean;
+  /** Fields of the transition screen (`expand=transitions.fields`), editmeta-shaped. */
+  fields?: FieldMetaMap;
+}
+
+/** A failed call, as the backend serializes `JiraError`. */
+export interface JiraErrorInfo {
+  message: string;
+  status?: number;
+  /** Per-field errors, keyed by field id (`{ resolution: "Resolution is required." }`). */
+  errors: Record<string, string>;
+  /** Messages without a field (workflow validators, permissions…). */
+  errorMessages: string[];
 }
 
 export interface Issue {
